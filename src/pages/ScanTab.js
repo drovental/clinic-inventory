@@ -1,0 +1,230 @@
+﻿// src/pages/ScanTab.js
+import React, { useState, useCallback } from "react";
+import toast from "react-hot-toast";
+import { useCameraScanner, useUSBScanner } from "../hooks/useBarcodeScanner";
+import { useInventory, useTreatments, usePatients } from "../hooks/useFirestore";
+import TreatmentCard from "../components/TreatmentCard";
+
+export default function ScanTab({ user }) {
+  const { items, findByBarcode, decrementQty, useBotoxUnits } = useInventory();
+  const { patients } = usePatients();
+  const { treatments, addTreatment } = useTreatments();
+
+  const [manualBarcode, setManualBarcode] = useState("");
+  const [searchName, setSearchName] = useState("");
+  const [scannedItem, setScannedItem] = useState(null);
+  const [patientId, setPatientId] = useState("");
+  const [dose, setDose] = useState("1");
+  const [customUnits, setCustomUnits] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const isBotox = (item) => item && (
+    item.category === "בוטוקס" ||
+    item.name?.toLowerCase().includes("dysport") ||
+    item.name?.toLowerCase().includes("xeomin") ||
+    item.name?.toLowerCase().includes("botox") ||
+    item.name?.includes("דיספורט") ||
+    item.name?.includes("קסאומין") ||
+    item.name?.includes("בוטוקס")
+  );
+
+  // Total units currently available for a botox item: units left in the open
+  // vial plus the units in all sealed vials.
+  const availableUnits = (item) =>
+    (item.openVialUnits || 0) + (item.qty || 0) * (item.unitsPerVial || 0);
+
+  const handleBarcode = useCallback((code) => {
+    const item = findByBarcode(code);
+    if (!item) { toast.error(`ברקוד "${code}" לא נמצא במלאי`); return; }
+    if (item.qty <= 0) { toast.error(`${item.name} — אין מלאי!`); return; }
+    setScannedItem(item);
+    setPatientId(patients[0]?.id || "");
+    setCustomUnits("");
+    toast.success(`נסרק: ${item.name}`);
+  }, [findByBarcode, patients]);
+
+  useUSBScanner(handleBarcode);
+  const { videoRef, active: camActive, error: camError, start: startCam, stop: stopCam } = useCameraScanner(handleBarcode);
+
+  function handleManual(e) {
+    e.preventDefault();
+    handleBarcode(manualBarcode);
+    setManualBarcode("");
+  }
+
+  async function confirmTreatment() {
+    if (!scannedItem || !patientId) return;
+    const actualDose = isBotox(scannedItem) ? parseFloat(customUnits) : parseFloat(dose);
+    if (isBotox(scannedItem) && (!customUnits || actualDose <= 0)) {
+      toast.error("יש להזין כמות יחידות"); return;
+    }
+    if (isBotox(scannedItem)) {
+      if (actualDose > availableUnits(scannedItem)) {
+        toast.error(`לא ניתן להשתמש ב-${actualDose} יחידות — יש רק ${availableUnits(scannedItem)}`); return;
+      }
+    } else if (actualDose > scannedItem.qty) {
+      toast.error(`לא ניתן להשתמש ב-${actualDose} יחידות — יש רק ${scannedItem.qty}`); return;
+    }
+    const patient = patients.find(p => p.id === patientId);
+    setSaving(true);
+    try {
+      let remainingAfter;
+      if (isBotox(scannedItem)) {
+        const result = await useBotoxUnits(scannedItem, actualDose);
+        remainingAfter = availableUnits({ ...scannedItem, qty: result.vials, openVialUnits: result.openVialUnits });
+      } else {
+        await decrementQty(scannedItem.id, actualDose);
+        remainingAfter = scannedItem.qty - actualDose;
+      }
+      await addTreatment({
+        productId: scannedItem.id,
+        productName: scannedItem.name,
+        barcode: scannedItem.barcode,
+        patientId,
+        patientName: patient?.name || "",
+        dose: actualDose,
+        note,
+        therapist: user.email,
+        remainingAfter,
+      });
+      toast.success("הטיפול נשמר בהצלחה ✅");
+
+      if (isBotox(scannedItem)) {
+        if (remainingAfter <= scannedItem.threshold * (scannedItem.unitsPerVial || 1)) {
+          toast(`⚠️ ${scannedItem.name} — מלאי נמוך!`, { duration: 5000 });
+        }
+      } else if (remainingAfter <= scannedItem.threshold) {
+        toast(`⚠️ ${scannedItem.name} — מלאי נמוך!`, { duration: 5000 });
+      }
+
+      setScannedItem(null);
+      setNote("");
+      setCustomUnits("");
+    } catch (e) {
+      toast.error("שגיאה בשמירה: " + e.message);
+    } finally { setSaving(false); }
+  }
+
+  const lowStockItems = items.filter(i => i.qty <= i.threshold);
+
+  return (
+    <div>
+      {lowStockItems.length > 0 && (
+        <div style={{ background: "var(--warn-light)", border: "1px solid #fcd34d", borderRadius: "var(--radius-md)", padding: "10px 14px", marginBottom: "1rem", fontSize: "0.875rem", color: "var(--warn)", display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+          <div><strong>מלאי נמוך: </strong>{lowStockItems.map(i => `${i.name} (${i.qty})`).join("، ")}</div>
+        </div>
+      )}
+
+      {camActive && (
+        <div style={{ position: "relative", marginBottom: "1rem", borderRadius: "var(--radius-lg)", overflow: "hidden", background: "#000", aspectRatio: "4/3" }}>
+          <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 220, height: 120, border: "2px solid rgba(255,255,255,0.8)", borderRadius: 8, boxShadow: "0 0 0 1000px rgba(0,0,0,0.4)" }} />
+          </div>
+          <button onClick={stopCam} style={{ position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 13 }}>✕ סגור מצלמה</button>
+        </div>
+      )}
+
+      <div style={{ marginBottom: 12 }}>
+        <input value={searchName} onChange={e => setSearchName(e.target.value)} placeholder="חיפוש מוצר לפי שם..." />
+        {searchName && (
+          <div style={{ marginTop: 8 }}>
+            {items.filter(i => i.name?.toLowerCase().includes(searchName.toLowerCase())).map(item => (
+              <div key={item.id} className="card" style={{ marginBottom: 8, cursor: "pointer", padding: "10px 14px" }}
+                onClick={() => { setScannedItem(item); setPatientId(patients[0]?.id || ""); setSearchName(""); setCustomUnits(""); }}>
+                <div style={{ fontWeight: 600 }}>{item.name}</div>
+                <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{item.manufacturer} · מלאי: {item.qty}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!scannedItem && (
+        <div>
+          <button className="btn btn-primary btn-full" onClick={camActive ? stopCam : startCam} style={{ marginBottom: 12, fontSize: "1rem", padding: "14px" }}>
+            📷 {camActive ? "עצור סריקה" : "סרוק ברקוד עם מצלמה"}
+          </button>
+          {camError && <p style={{ color: "var(--danger)", fontSize: "0.8rem", marginBottom: 8 }}>שגיאת מצלמה: {camError}</p>}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: "0.5rem" }}>
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>או הזן ברקוד ידנית</span>
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+          </div>
+          <form onSubmit={handleManual} style={{ display: "flex", gap: 8 }}>
+            <input value={manualBarcode} onChange={e => setManualBarcode(e.target.value)} placeholder="הזן / סרוק ברקוד..." autoComplete="off" style={{ flex: 1 }} />
+            <button type="submit" className="btn btn-secondary">חפש</button>
+          </form>
+          <p style={{ fontSize: "0.75rem", color: "var(--text-tertiary)", marginTop: 6 }}>💡 סורק USB? פשוט סרוק — הוא יזוהה אוטומטית</p>
+        </div>
+      )}
+
+      {scannedItem && (
+        <div className="card" style={{ marginBottom: "1rem", border: "2px solid var(--accent)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <h3 style={{ marginBottom: 2 }}>{scannedItem.name}</h3>
+              <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{scannedItem.manufacturer} · {scannedItem.category}</span>
+            </div>
+            <span className={`badge ${scannedItem.qty > scannedItem.threshold * 2 ? "badge-ok" : scannedItem.qty > scannedItem.threshold ? "badge-warn" : "badge-danger"}`}>
+              {isBotox(scannedItem)
+                ? `מלאי: ${availableUnits(scannedItem)} יח'`
+                : `מלאי: ${scannedItem.qty}`}
+            </span>
+          </div>
+
+          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+            <div>
+              <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>מטופל</label>
+              <select value={patientId} onChange={e => setPatientId(e.target.value)}>
+                <option value="">— בחר מטופל —</option>
+                {patients.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>
+                {isBotox(scannedItem) ? `כמות יחידות שהוזרקו (מתוך ${availableUnits(scannedItem)})` : "כמות לשימוש"}
+              </label>
+              {isBotox(scannedItem) ? (
+                <input
+                  type="number" min="1" max={availableUnits(scannedItem)}
+                  value={customUnits} onChange={e => setCustomUnits(e.target.value)}
+                  placeholder="למשל: 50"
+                />
+              ) : (
+                <select value={dose} onChange={e => setDose(e.target.value)}>
+                  {["0.5","1","1.5","2","2.5","3","4","5"].map(v =>
+                    <option key={v} value={v}>{v} יח'</option>
+                  )}
+                </select>
+              )}
+            </div>
+            <div>
+              <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>הערת טיפול</label>
+              <input value={note} onChange={e => setNote(e.target.value)} placeholder="אזור טיפול, טכניקה..." />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirmTreatment} disabled={!patientId || saving}>
+              {saving ? <div className="spinner" style={{ width: 18, height: 18, borderTopColor: "#fff" }} /> : "✅ אשר טיפול"}
+            </button>
+            <button className="btn btn-secondary" onClick={() => { setScannedItem(null); setCustomUnits(""); }}>ביטול</button>
+          </div>
+        </div>
+      )}
+
+      <h3 style={{ marginBottom: "0.75rem", marginTop: "1.25rem" }}>טיפולים אחרונים</h3>
+      {treatments.length === 0 ? (
+        <div className="empty-state">
+          <span style={{ fontSize: 40, opacity: 0.3 }}>📋</span>
+          <p>אין טיפולים עדיין</p>
+        </div>
+      ) : (
+        treatments.slice(0, 10).map(t => <TreatmentCard key={t.id} treatment={t} />)
+      )}
+    </div>
+  );
+}

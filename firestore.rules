@@ -1,0 +1,32 @@
+// firestore.rules
+// העתק קובץ זה לקונסול Firebase → Firestore → Rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // רק משתמשים מאומתים יכולים לגשת
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // מלאי - כל משתמש מאומת יכול לקרוא/לכתוב
+    match /inventory/{itemId} {
+      allow read, write: if isAuth();
+    }
+
+    // מטופלים
+    match /patients/{patientId} {
+      allow read, write: if isAuth();
+    }
+
+    // טיפולים
+    match /treatments/{treatmentId} {
+      allow read, write: if isAuth();
+    }
+
+    // הזמנות
+    match /orders/{orderId} {
+      allow read, write: if isAuth();
+    }
+  }
+}
