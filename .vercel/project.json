@@ -1,1 +1,16 @@
-{"projectId":"prj_NhBKthikbYajgA34zAj78DmwCs3n","orgId":"team_pm2oczS55tQnGuqGlcx2U5TF","projectName":"clinic-inventory"}
+{
+  "projectId": "prj_NhBKthikbYajgA34zAj78DmwCs3n",
+  "orgId": "team_pm2oczS55tQnGuqGlcx2U5TF",
+  "projectName": "clinic-inventory",
+  "settings": {
+    "createdAt": 1781003811613,
+    "framework": "create-react-app",
+    "devCommand": null,
+    "installCommand": null,
+    "buildCommand": null,
+    "outputDirectory": null,
+    "rootDirectory": null,
+    "directoryListing": false,
+    "nodeVersion": "24.x"
+  }
+}
