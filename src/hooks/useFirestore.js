@@ -85,9 +85,7 @@ export function useInventory() {
   }
 
 
-  async function incrementQty(id, amount) {
-    await updateDoc(doc(db, "inventory", id), { qty: increment(amount) });
-  }
+  async function incrementQty(id, amount, newExpiry) { const update = { qty: increment(amount) }; if (newExpiry) { const item = items.find(i => i.id === id); const existingExpiry = item ? item.expiry : null; if (!existingExpiry || newExpiry < existingExpiry) { update.expiry = newExpiry; } } await updateDoc(doc(db, "inventory", id), update); }
 
   async function deleteItem(id) {
     await deleteDoc(doc(db, "inventory", id));
@@ -175,3 +173,5 @@ export function useOrders() {
 
   return { orders, loading, addOrder, updateOrderStatus };
 }
+
+

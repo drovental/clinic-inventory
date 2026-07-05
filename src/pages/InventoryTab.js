@@ -4,12 +4,9 @@ import toast from "react-hot-toast";
 import { useInventory } from "../hooks/useFirestore";
 import InventoryItem from "../components/InventoryItem";
 
-const BOTOX_CATEGORY = "בוטוקס";
-
 const EMPTY_FORM = {
   name: "", barcode: "", manufacturer: "", category: "פילר",
-  volume: "", qty: "", threshold: "3", expiry: "", notes: "",
-  unitsPerVial: ""
+  volume: "", qty: "", threshold: "3", expiry: "", notes: ""
 };
 
 const CATEGORIES = ["פילר", "בוטוקס", "ביוסטימולטור", "חומצה היאלורונית", "ליפוליטי", "אחר"];
@@ -35,22 +32,15 @@ export default function InventoryTab() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.name || !form.barcode) { toast.error("שם וברקוד חובה"); return; }
+    // Check for duplicate barcode
     if (items.find(i => i.barcode === form.barcode)) { toast.error("ברקוד כבר קיים במלאי"); return; }
-    if (form.category === BOTOX_CATEGORY && !form.unitsPerVial) {
-      toast.error("יש להזין יחידות לבקבוק"); return;
-    }
     setSaving(true);
     try {
-      const payload = {
+      await addItem({
         ...form,
         qty: parseFloat(form.qty) || 0,
         threshold: parseFloat(form.threshold) || 3,
-      };
-      if (form.category === BOTOX_CATEGORY) {
-        payload.unitsPerVial = parseFloat(form.unitsPerVial) || 0;
-        payload.openVialUnits = 0;
-      }
-      await addItem(payload);
+      });
       toast.success("פריט נוסף בהצלחה");
       setForm(EMPTY_FORM);
       setShowForm(false);
@@ -117,19 +107,12 @@ export default function InventoryTab() {
                 {CATEGORIES.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
-            {form.category === BOTOX_CATEGORY ? (
-              <div>
-                <label>יחידות לבקבוק *</label>
-                <input type="number" min="1" value={form.unitsPerVial} onChange={e => setForm({ ...form, unitsPerVial: e.target.value })} placeholder="למשל: 500 (דיספורט) / 100 (קסאומין)" required />
-              </div>
-            ) : (
-              <div>
-                <label>נפח / יחידה</label>
-                <input value={form.volume} onChange={e => setForm({ ...form, volume: e.target.value })} placeholder='1.0 מ"ל' />
-              </div>
-            )}
             <div>
-              <label>{form.category === BOTOX_CATEGORY ? "כמות בקבוקים *" : "כמות במלאי *"}</label>
+              <label>נפח / יחידה</label>
+              <input value={form.volume} onChange={e => setForm({ ...form, volume: e.target.value })} placeholder='1.0 מ"ל' />
+            </div>
+            <div>
+              <label>כמות במלאי *</label>
               <input type="number" min="0" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} placeholder="10" required />
             </div>
             <div>
@@ -158,7 +141,7 @@ export default function InventoryTab() {
           <InventoryItem
             key={item.id}
             item={item}
-            onAddStock={async (n) => { await incrementQty(item.id, n); toast.success(`נוספו ${n} ${item.category === BOTOX_CATEGORY ? "בקבוקים" : "יחידות"}`); }}
+            onAddStock={async (n, newExpiry) => { await incrementQty(item.id, n, newExpiry); toast.success(`נוספו ${n} יחידות`); }}
             onEdit={async (data) => { await updateItem(item.id, data); toast.success("עודכן"); }}
             onDelete={async () => { await deleteItem(item.id); toast.success("נמחק"); }}
           />
