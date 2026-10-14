@@ -7,12 +7,14 @@ import ScanTab from "./ScanTab";
 import InventoryTab from "./InventoryTab";
 import PatientsTab from "./PatientsTab";
 import OrdersTab from "./OrdersTab";
+import FollowupTab from "./FollowupTab";
 
 const TABS = [
   { id: "scan",      label: "סריקה",    icon: "📷" },
   { id: "inventory", label: "מלאי",     icon: "📦" },
   { id: "patients",  label: "מטופלים",  icon: "👥" },
   { id: "orders",    label: "הזמנות",   icon: "🚚" },
+  { id: "followup",  label: "מעקב",     icon: "💬" },
 ];
 
 export default function MainApp({ user }) {
@@ -55,6 +57,7 @@ export default function MainApp({ user }) {
         {activeTab === "inventory" && <InventoryTab />}
         {activeTab === "patients"  && <PatientsTab />}
         {activeTab === "orders"    && <OrdersTab />}
+        {activeTab === "followup"  && <FollowupTab />}
       </main>
 
       {/* Bottom nav */}
