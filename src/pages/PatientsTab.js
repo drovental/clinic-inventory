@@ -1,4 +1,4 @@
-// src/pages/PatientsTab.js
+﻿// src/pages/PatientsTab.js
 import React, { useState } from "react";
 import toast from "react-hot-toast";
 import { usePatients, useTreatments } from "../hooks/useFirestore";
@@ -7,7 +7,7 @@ const EMPTY = { name: "", phone: "", dob: "", notes: "", allergies: "" };
 
 export default function PatientsTab() {
   const { patients, loading, addPatient, deletePatient } = usePatients();
-  const { treatments } = useTreatments();
+  const { treatments, deleteTreatment } = useTreatments();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
@@ -105,14 +105,18 @@ export default function PatientsTab() {
                   <>
                     <p style={{ fontSize: "0.8rem", fontWeight: 600, marginBottom: 6 }}>היסטוריית טיפולים:</p>
                     {ptTreatments.slice(0, 5).map(t => (
-                      <div key={t.id} style={{
-                        display: "flex", justifyContent: "space-between", fontSize: "0.8rem",
-                        padding: "5px 0", borderBottom: "1px solid var(--border)"
-                      }}>
+                <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.8rem", padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
                         <span>{t.productName} — {t.dose} יח'{t.note ? ` · ${t.note}` : ""}</span>
                         <span style={{ color: "var(--text-secondary)" }}>
                           {t.createdAt?.toDate?.().toLocaleDateString("he-IL") || ""}
                         </span>
+                  <button
+                    className="btn btn-danger"
+                    style={{ fontSize: "0.7rem", padding: "2px 8px" }}
+                    onClick={async () => { if (window.confirm("למחוק טיפול זה?")) await deleteTreatment(t.id); }}
+                  >
+                    מחק
+                  </button>
                       </div>
                     ))}
                   </>

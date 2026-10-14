@@ -1,4 +1,4 @@
-// src/hooks/useFirestore.js
+﻿// src/hooks/useFirestore.js
 import { useState, useEffect } from "react";
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc,
@@ -145,8 +145,11 @@ export function useTreatments() {
   async function addTreatment(treatment) {
     await addDoc(collection(db, "treatments"), { ...treatment, createdAt: serverTimestamp() });
   }
+  async function deleteTreatment(id) {
+    await deleteDoc(doc(db, "treatments", id));
+  }
 
-  return { treatments, loading, addTreatment };
+  return { treatments, loading, addTreatment, deleteTreatment };
 }
 
 // ── Orders ──────────────────────────────────────────────────
