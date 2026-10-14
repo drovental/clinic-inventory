@@ -5,6 +5,7 @@
 
 const { onRequest } = require("firebase-functions/v2/https");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const logger = require("firebase-functions/logger");
@@ -30,7 +31,12 @@ const WEBHOOK_URL = "https://europe-west1-aria-inventory.cloudfunctions.net/what
 const CLAUDE_MODEL = "claude-sonnet-5-5";
 const CONVERSATIONS = "whatsappConversations";
 const FOLLOWUPS = "whatsappFollowups";
+const TREATMENTS = "treatments"; // written by the inventory app
+const PATIENTS = "patients";     // written by the inventory app
 const MAX_HISTORY = 30;
+// When to send the follow-up: next day at this hour (Israel time)
+const FOLLOWUP_HOUR = 11;
+const TIMEZONE = "Asia/Jerusalem";
 
 // ---- Persona / system prompt (Hebrew) ----
 const SYSTEM_PROMPT = `את נציגת מעקב של ARIA Clinic, קליניקה לאסתטיקה רפואית. שמך "נועה".
@@ -235,48 +241,165 @@ exports.whatsappWebhook = onRequest(
 );
 
 // =====================================================================
-// 2) Start a follow-up: create a doc in "whatsappFollowups"
-//    { phone: "+9725xxxxxxx", name: "דנה", treatment: "בוטוקס מצח", treatmentDate: "2026-10-13" }
+// Follow-up sending (shared by manual + automatic flows)
+// =====================================================================
+function normalizePhone(raw) {
+  let phone = String(raw || "").replace(/[\s-]/g, "");
+  if (!phone) return null;
+  if (phone.startsWith("0")) phone = "+972" + phone.slice(1);
+  if (!phone.startsWith("+")) phone = "+" + phone;
+  if (phone.replace(/\D/g, "").length < 11) return null; // not a full international number
+  return phone;
+}
+
+async function sendOpeningMessage({ sid, token, ref, data }) {
+  const phone = normalizePhone(data.phone);
+  if (!phone) {
+    await ref.update({ status: "failed", error: "מספר טלפון לא תקין" });
+    return;
+  }
+  const to = `whatsapp:${phone}`;
+  const key = phoneKey(to);
+
+  const firstName = (data.name || "").split(" ")[0];
+  const opening =
+    `היי${firstName ? " " + firstName : ""} 💛 זאת נועה מ-ARIA Clinic.\n` +
+    `רציתי לבדוק איך את מרגישה אחרי ${data.treatment ? "ה" + data.treatment : "הטיפול"}? הכל בסדר באזור הטיפול?`;
+
+  await db.collection(CONVERSATIONS).doc(key).set(
+    {
+      phone: key,
+      whatsapp: to,
+      name: data.name || "",
+      patientId: data.patientId || "",
+      treatment: data.treatment || "",
+      treatmentDate: data.treatmentDate || "",
+      status: "open",
+      lastRisk: "ok",
+      messages: [{ role: "assistant", text: opening, at: new Date().toISOString() }],
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: false }
+  );
+
+  try {
+    await sendWhatsApp(sid, token, to, opening);
+    await ref.update({ sentAt: admin.firestore.FieldValue.serverTimestamp(), status: "sent" });
+  } catch (e) {
+    logger.error("Opening message failed", e);
+    await ref.update({ status: "failed", error: e.message });
+  }
+}
+
+// =====================================================================
+// 2) Manual follow-up: create a doc in "whatsappFollowups" without scheduledFor
+//    { phone: "+9725xxxxxxx", name: "דנה", treatment: "בוטוקס מצח" }
+//    Docs that carry scheduledFor are sent later by sendScheduledFollowups.
 // =====================================================================
 exports.startFollowup = onDocumentCreated(
   { document: `${FOLLOWUPS}/{id}`, secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN] },
   async (event) => {
     const data = event.data?.data();
     if (!data || !data.phone) return;
+    if (data.scheduledFor) return; // scheduled → handled by the hourly job
+    await sendOpeningMessage({
+      sid: TWILIO_ACCOUNT_SID.value(),
+      token: TWILIO_AUTH_TOKEN.value(),
+      ref: event.data.ref,
+      data,
+    });
+  }
+);
 
-    let phone = String(data.phone).replace(/[\s-]/g, "");
-    if (phone.startsWith("0")) phone = "+972" + phone.slice(1);
-    if (!phone.startsWith("+")) phone = "+" + phone;
-    const to = `whatsapp:${phone}`;
-    const key = phoneKey(to);
+// =====================================================================
+// 3) Automatic: a treatment saved in the inventory app → schedule a follow-up
+//    for the next day at FOLLOWUP_HOUR. Several products for the same patient
+//    on the same day are merged into one follow-up.
+// =====================================================================
+function nextDayAt(hour) {
+  // Compute "tomorrow at HH:00" in Israel time, returned as a JS Date (UTC instant)
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now).reduce((o, p) => ((o[p.type] = p.value), o), {});
+  const tomorrow = new Date(Date.UTC(+parts.year, +parts.month - 1, +parts.day + 1, hour, 0, 0));
+  // Israel offset at that moment (UTC+2 or UTC+3)
+  const offsetMin = (() => {
+    const s = new Intl.DateTimeFormat("en-US", { timeZone: TIMEZONE, timeZoneName: "shortOffset" })
+      .formatToParts(tomorrow).find((p) => p.type === "timeZoneName")?.value || "GMT+2";
+    const m = s.match(/([+-])(\d+)(?::(\d+))?/);
+    return m ? (m[1] === "-" ? -1 : 1) * (+m[2] * 60 + (+m[3] || 0)) : 120;
+  })();
+  return new Date(tomorrow.getTime() - offsetMin * 60 * 1000);
+}
 
-    const firstName = (data.name || "").split(" ")[0];
-    const opening =
-      `היי${firstName ? " " + firstName : ""} 💛 זאת נועה מ-ARIA Clinic.\n` +
-      `רציתי לבדוק איך את מרגישה אחרי ${data.treatment ? "ה" + data.treatment : "הטיפול"}? הכל בסדר באזור הטיפול?`;
+exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (event) => {
+  const t = event.data?.data();
+  if (!t || !t.patientId) return;
 
-    await db.collection(CONVERSATIONS).doc(key).set(
-      {
-        phone: key,
-        whatsapp: to,
-        name: data.name || "",
-        treatment: data.treatment || "",
-        treatmentDate: data.treatmentDate || "",
-        status: "open",
-        lastRisk: "ok",
-        messages: [{ role: "assistant", text: opening, at: new Date().toISOString() }],
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: false }
-    );
+  const patientSnap = await db.collection(PATIENTS).doc(t.patientId).get();
+  if (!patientSnap.exists) return;
+  const patient = patientSnap.data();
+  const phone = normalizePhone(patient.phone);
+  if (!phone) {
+    logger.info("Treatment without valid patient phone – no follow-up", { patientId: t.patientId });
+    return;
+  }
+  if (patient.noFollowup === true) return; // opt-out flag on the patient record
 
-    try {
-      await sendWhatsApp(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value(), to, opening);
-      await event.data.ref.update({ sentAt: admin.firestore.FieldValue.serverTimestamp(), status: "sent" });
-    } catch (e) {
-      logger.error("Opening message failed", e);
-      await event.data.ref.update({ status: "failed", error: e.message });
+  const dateKey = new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(new Date()); // YYYY-MM-DD
+  const followupId = `${t.patientId}_${dateKey}`;
+  const ref = db.collection(FOLLOWUPS).doc(followupId);
+  const treatmentLabel = [t.productName, t.note].filter(Boolean).join(" – ");
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) {
+      const d = snap.data();
+      if (d.status !== "scheduled") return; // already sent – don't touch
+      const treatments = Array.from(new Set([...(d.treatments || []), treatmentLabel]));
+      tx.update(ref, { treatments, treatment: treatments.join(", ") });
+      return;
     }
+    tx.set(ref, {
+      phone,
+      name: patient.name || t.patientName || "",
+      patientId: t.patientId,
+      treatments: [treatmentLabel],
+      treatment: treatmentLabel,
+      treatmentDate: dateKey,
+      status: "scheduled",
+      scheduledFor: admin.firestore.Timestamp.fromDate(nextDayAt(FOLLOWUP_HOUR)),
+      source: "auto",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+});
+
+// =====================================================================
+// 4) Hourly: send scheduled follow-ups whose time has come
+// =====================================================================
+exports.sendScheduledFollowups = onSchedule(
+  { schedule: "every 1 hours", timeZone: TIMEZONE, secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN] },
+  async () => {
+    const now = admin.firestore.Timestamp.now();
+    const due = await db
+      .collection(FOLLOWUPS)
+      .where("status", "==", "scheduled")
+      .where("scheduledFor", "<=", now)
+      .limit(50)
+      .get();
+
+    for (const docSnap of due.docs) {
+      await docSnap.ref.update({ status: "sending" });
+      await sendOpeningMessage({
+        sid: TWILIO_ACCOUNT_SID.value(),
+        token: TWILIO_AUTH_TOKEN.value(),
+        ref: docSnap.ref,
+        data: docSnap.data(),
+      });
+    }
+    logger.info(`Scheduled follow-ups processed: ${due.size}`);
   }
 );
