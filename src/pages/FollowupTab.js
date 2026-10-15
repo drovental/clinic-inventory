@@ -173,12 +173,12 @@ export default function FollowupTab() {
                   {(c.messages || []).map((m, i) => (
                     <div key={i} style={{
                       alignSelf: m.role === "client" ? "flex-start" : "flex-end",
-                      background: m.role === "client" ? "var(--accent-light)" : "var(--bg-secondary, rgba(255,255,255,0.08))",
-                      color: "var(--text-primary, inherit)",
-                      border: "1px solid var(--border)",
+                      background: m.role === "client" ? "rgba(212,175,116,0.18)" : "#16204a",
+                      color: "#f3f1ea",
+                      border: "1px solid rgba(212,175,116,0.25)",
                       borderRadius: 12, padding: "8px 12px", maxWidth: "85%", fontSize: "0.85rem",
                     }}>
-                      <div style={{ fontSize: "0.65rem", color: "var(--text-tertiary)", marginBottom: 2 }}>
+                      <div style={{ fontSize: "0.65rem", color: "#b9c0d6", marginBottom: 2 }}>
                         {m.role === "client" ? c.name || "לקוחה" : "נועה"} · {fmtDate(m.at)}
                       </div>
                       {m.text}

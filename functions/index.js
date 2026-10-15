@@ -15,6 +15,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 
 admin.initializeApp();
 const db = admin.firestore();
+db.settings({ ignoreUndefinedProperties: true });
 
 setGlobalOptions({ region: "europe-west1", maxInstances: 10 });
 
@@ -117,16 +118,24 @@ async function askClaude(apiKey, conv) {
   });
 
   const toolUse = res.content.find((c) => c.type === "tool_use");
-  if (toolUse) return toolUse.input;
-
-  // Fallback: the model answered in plain text instead of using the tool
   const text = res.content
     .filter((c) => c.type === "text")
     .map((c) => c.text)
     .join("")
     .trim();
-  if (!text) throw new Error("Claude returned an empty response");
-  return { reply: text, risk: "ok", summary: "תשובה ללא סיווג (טקסט חופשי).", done: false };
+
+  const raw = toolUse ? toolUse.input || {} : {};
+  const reply = (typeof raw.reply === "string" && raw.reply.trim()) || text;
+  if (!reply) throw new Error("Claude returned an empty response");
+
+  // Normalize so every field is always a valid Firestore value
+  const risk = ["ok", "attention", "urgent"].includes(raw.risk) ? raw.risk : "ok";
+  return {
+    reply,
+    risk,
+    summary: (typeof raw.summary === "string" && raw.summary) || "ללא סיכום.",
+    done: raw.done === true,
+  };
 }
 
 async function sendWhatsApp(sid, token, to, body) {
