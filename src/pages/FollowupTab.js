@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import { collection, onSnapshot, query, orderBy, doc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
-import { usePatients } from "../hooks/useFirestore";
+import { usePatients, useTherapists } from "../hooks/useFirestore";
 
 const RISK = {
   urgent:    { label: "דחוף",          badge: "badge-danger", color: "var(--danger)" },
@@ -35,6 +35,19 @@ export default function FollowupTab() {
   const [newTreatment, setNewTreatment] = useState("");
   const [sending, setSending] = useState(false);
   const { patients } = usePatients();
+  const { therapists, addTherapist, deleteTherapist } = useTherapists();
+  const [showTherapists, setShowTherapists] = useState(false);
+  const [newTherapist, setNewTherapist] = useState({ name: "", phone: "" });
+  const [newTherapistId, setNewTherapistId] = useState("");
+
+  async function handleAddTherapist() {
+    if (!newTherapist.name || !newTherapist.phone) { toast.error("שם וטלפון חובה"); return; }
+    try {
+      await addTherapist(newTherapist);
+      setNewTherapist({ name: "", phone: "" });
+      toast.success("מטפל/ת נוסף/ה");
+    } catch (e) { toast.error("שגיאה: " + e.message); }
+  }
 
   useEffect(() => {
     const q = query(collection(db, "whatsappConversations"), orderBy("updatedAt", "desc"));
@@ -64,6 +77,19 @@ export default function FollowupTab() {
     toast.success(handled ? "סומן כטופל" : "הוחזר לרשימה");
   }
 
+  // Re-send a scheduled/failed follow-up immediately (bypasses the hourly job)
+  async function sendPendingNow(f) {
+    try {
+      await addDoc(collection(db, "whatsappFollowups"), {
+        phone: f.phone, name: f.name || "", patientId: f.patientId || "",
+        treatment: f.treatment || "", treatmentDate: f.treatmentDate || "",
+        status: "pending", source: "manual-resend", createdAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, "whatsappFollowups", f.id), { status: "resent", resentAt: serverTimestamp() });
+      toast.success("נשלח עכשיו 💬");
+    } catch (e) { toast.error("שגיאה: " + e.message); }
+  }
+
   async function sendNow() {
     const p = patients.find(x => x.id === newPatientId);
     if (!p) { toast.error("בחר מטופלת"); return; }
@@ -73,10 +99,12 @@ export default function FollowupTab() {
       await addDoc(collection(db, "whatsappFollowups"), {
         phone: p.phone, name: p.name, patientId: p.id,
         treatment: newTreatment, treatmentDate: new Date().toISOString().slice(0, 10),
+        therapistId: newTherapistId || "",
+        therapistName: therapists.find(t => t.id === newTherapistId)?.name || "",
         status: "pending", source: "manual", createdAt: serverTimestamp(),
       });
       toast.success("הודעת המעקב נשלחת 💬");
-      setShowNew(false); setNewPatientId(""); setNewTreatment("");
+      setShowNew(false); setNewPatientId(""); setNewTreatment(""); setNewTherapistId("");
     } catch (e) { toast.error("שגיאה: " + e.message); }
     finally { setSending(false); }
   }
@@ -108,6 +136,13 @@ export default function FollowupTab() {
               </select>
             </div>
             <div>
+              <label>מטפל/ת (יקבל/תקבל התראות)</label>
+              <select value={newTherapistId} onChange={e => setNewTherapistId(e.target.value)}>
+                <option value="">— ללא —</option>
+                {therapists.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div>
               <label>טיפול (לניסוח ההודעה)</label>
               <input value={newTreatment} onChange={e => setNewTreatment(e.target.value)} placeholder="בוטוקס מצח, שפתיים..." />
             </div>
@@ -118,6 +153,32 @@ export default function FollowupTab() {
         </div>
       )}
 
+      <div className="card" style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setShowTherapists(!showTherapists)}>
+          <h3 style={{ fontSize: "0.95rem", margin: 0 }}>👩‍⚕️ מטפלים ({therapists.length})</h3>
+          <span style={{ color: "var(--text-tertiary)" }}>{showTherapists ? "▲" : "▼"}</span>
+        </div>
+        {showTherapists && (
+          <div style={{ marginTop: 10 }}>
+            <p style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginBottom: 8 }}>
+              המטפל/ת שנבחר/ה בטופס הטיפול יקבל/תקבל התראה בווטסאפ כשמשהו לא תקין, בנוסף למנהל הרפואי.
+            </p>
+            {therapists.map(t => (
+              <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85rem", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                <span>{t.name} · <span style={{ color: "var(--text-secondary)" }}>{t.phone}</span></span>
+                <button className="btn btn-danger" style={{ fontSize: "0.7rem", padding: "2px 8px" }}
+                  onClick={async () => { if (window.confirm(`להסיר את ${t.name}?`)) await deleteTherapist(t.id); }}>הסר</button>
+              </div>
+            ))}
+            <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+              <input value={newTherapist.name} onChange={e => setNewTherapist({ ...newTherapist, name: e.target.value })} placeholder="שם (למשל ד״ר גלינה)" />
+              <input value={newTherapist.phone} onChange={e => setNewTherapist({ ...newTherapist, phone: e.target.value })} placeholder="ווטסאפ: 050-0000000" />
+              <button className="btn btn-secondary" onClick={handleAddTherapist}>＋ הוסף מטפל/ת</button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {pending.length > 0 && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h3 style={{ marginBottom: 8, fontSize: "0.95rem" }}>מעקבים ממתינים</h3>
@@ -127,6 +188,7 @@ export default function FollowupTab() {
               <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 {f.scheduledFor && <span style={{ color: "var(--text-secondary)" }}>{fmtDate(f.scheduledFor)}</span>}
                 <span className={`badge ${FOLLOWUP_STATUS[f.status]?.badge || "badge-info"}`}>{FOLLOWUP_STATUS[f.status]?.label || f.status}</span>
+                <button className="btn btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }} onClick={() => sendPendingNow(f)}>שלח עכשיו</button>
               </span>
             </div>
           ))}
@@ -155,7 +217,7 @@ export default function FollowupTab() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>{c.name || "+" + c.phone}</div>
                 <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                  {c.treatment || "טיפול"} · {fmtDate(c.updatedAt)}
+                  {c.treatment || "טיפול"}{c.therapistName ? ` · ${c.therapistName}` : ""} · {fmtDate(c.updatedAt)}
                 </div>
                 {c.lastSummary && <div style={{ fontSize: "0.8rem", marginTop: 4 }}>{c.lastSummary}</div>}
               </div>

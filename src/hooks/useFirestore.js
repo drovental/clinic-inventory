@@ -178,3 +178,29 @@ export function useOrders() {
 }
 
 
+// ── Therapists (for WhatsApp follow-up alerts) ──────────────
+export function useTherapists() {
+  const [therapists, setTherapists] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const q = query(collection(db, "therapists"), orderBy("name"));
+    const unsub = onSnapshot(q, snap => {
+      setTherapists(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  async function addTherapist(t) {
+    await addDoc(collection(db, "therapists"), { ...t, createdAt: serverTimestamp() });
+  }
+  async function updateTherapist(id, data) {
+    await updateDoc(doc(db, "therapists", id), data);
+  }
+  async function deleteTherapist(id) {
+    await deleteDoc(doc(db, "therapists", id));
+  }
+
+  return { therapists, loading, addTherapist, updateTherapist, deleteTherapist };
+}

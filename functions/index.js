@@ -26,8 +26,11 @@ const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 const ALERT_WHATSAPP_TO = defineSecret("ALERT_WHATSAPP_TO"); // comma-separated
 
 // ---- Config ----
-// Sandbox number during development. Replace with the clinic's registered sender later.
-const WHATSAPP_FROM = "whatsapp:+14155238886";
+// ARIA Clinic's registered WhatsApp Business sender
+const WHATSAPP_FROM = "whatsapp:+972523617231";
+// Approved WhatsApp template for the business-initiated opening message.
+// Variables: {{1}} = first name, {{2}} = treatment
+const OPENING_TEMPLATE_SID = "HX33e8aed946f18a25c62f63edd5a0e00b";
 const WEBHOOK_URL = "https://europe-west1-aria-inventory.cloudfunctions.net/whatsappWebhook";
 const CLAUDE_MODEL = "claude-sonnet-5-5";
 const CONVERSATIONS = "whatsappConversations";
@@ -40,14 +43,14 @@ const FOLLOWUP_HOUR = 11;
 const TIMEZONE = "Asia/Jerusalem";
 
 // ---- Persona / system prompt (Hebrew) ----
-const SYSTEM_PROMPT = `את נציגת מעקב של ARIA Clinic, קליניקה לאסתטיקה רפואית. שמך "נועה".
+const SYSTEM_PROMPT = `את "נועה", הנציגה הדיגיטלית של ARIA Clinic, קליניקה לאסתטיקה רפואית. את לא מסתירה שאת נציגה דיגיטלית – זו זהותך, ואת מציגה אותה בטבעיות.
 את מנהלת שיחת ווטסאפ עם לקוחה שעברה טיפול אסתטי בקליניקה לאחרונה. מטרת השיחה: לבדוק איך היא מרגישה אחרי הטיפול, לזהות בעיות או תופעות לוואי, ולתת תחושה שאכפת לנו.
 
 סגנון:
 - עברית טבעית, חמה, אנושית וקצרה – כמו הודעת ווטסאפ אמיתית, לא כמו טופס. משפט אחד עד שלושה. בלי רשימות, בלי כותרות.
 - פנייה בלשון נקבה כברירת מחדל (רוב הלקוחות נשים). אם ברור שמדובר בגבר – עברי ללשון זכר.
 - שאלה אחת בכל פעם. אל תחזרי על שאלות שכבר נענו.
-- אם שואלים אם את בוט – עני בכנות שאת עוזרת דיגיטלית של הקליניקה, ושד"ר עמית והצוות רואים את השיחה.
+- הזדהי כ"נועה, הנציגה הדיגיטלית של ARIA Clinic". אם שואלים אם את בוט או אדם – אשרי בכנות שאת נציגה דיגיטלית, ושד"ר עמית והצוות רואים את השיחה ומקבלים עדכון על כל דבר חריג.
 - אל תתני אבחנות או הנחיות רפואיות מעבר להנחיות הכלליות שאחרי טיפול (קירור עדין, להימנע מלחץ על האזור, להימנע מחום/ספורט ב-24 שעות). אל תמליצי על תרופות.
 - אם משהו לא תקין – הרגיעי, הסבירי שהרופא מקבל עדכון מיידי ויחזור אליה, ובמקרה דחוף בקשי ממנה להתקשר לקליניקה מיד.
 - כשברור שהכל בסדר – סיימי בחום, הזכירי שאפשר לכתוב לנו בכל שאלה, וסמני שהשיחה הסתיימה.
@@ -143,24 +146,56 @@ async function sendWhatsApp(sid, token, to, body) {
   return client.messages.create({ from: WHATSAPP_FROM, to, body });
 }
 
+// Business-initiated message: must use an approved template
+async function sendWhatsAppTemplate(sid, token, to, variables) {
+  const client = twilio(sid, token);
+  return client.messages.create({
+    from: WHATSAPP_FROM,
+    to,
+    contentSid: OPENING_TEMPLATE_SID,
+    contentVariables: JSON.stringify(variables),
+  });
+}
+
 async function alertDoctor({ sid, token, recipients, conv, result, lastClientText }) {
   const text =
     `*ARIA – מעקב אחרי טיפול: ${riskLabel[result.risk]}*\n` +
     `לקוחה: ${conv.name || "לא ידוע"}\n` +
     `טלפון: +${conv.phone}\n` +
-    `טיפול: ${conv.treatment || "לא צוין"}\n\n` +
-    `סיכום: ${result.summary}\n\n` +
+    `טיפול: ${conv.treatment || "לא צוין"}\n` +
+    (conv.therapistName ? `מטפל/ת: ${conv.therapistName}\n` : "") +
+    `\nסיכום: ${result.summary}\n\n` +
     `ההודעה האחרונה שלה: "${lastClientText}"`;
 
-  await Promise.all(
-    recipients.map((raw) => {
-      let to = raw.trim();
-      if (!to.startsWith("whatsapp:")) to = "whatsapp:" + to;
-      return sendWhatsApp(sid, token, to, text).catch((e) =>
-        logger.error("Alert send failed", { to, err: e.message })
-      );
+  // Manager(s) from the secret + the treating therapist (if known), without duplicates
+  const all = [...recipients];
+  if (conv.therapistPhone) all.push(conv.therapistPhone);
+  const seen = new Set();
+  const targets = all
+    .map((raw) => {
+      let to = String(raw || "").trim();
+      if (!to) return null;
+      if (!to.startsWith("whatsapp:")) to = "whatsapp:" + (normalizePhone(to) || to);
+      return to;
     })
+    .filter((to) => to && !seen.has(to) && seen.add(to));
+
+  await Promise.all(
+    targets.map((to) =>
+      sendWhatsApp(sid, token, to, text).catch((e) =>
+        logger.error("Alert send failed", { to, err: e.message })
+      )
+    )
   );
+}
+
+// Look up a therapist's WhatsApp number by id (therapists collection, managed in the app)
+async function getTherapist(therapistId) {
+  if (!therapistId) return null;
+  const snap = await db.collection("therapists").doc(therapistId).get();
+  if (!snap.exists) return null;
+  const t = snap.data();
+  return { id: snap.id, name: t.name || "", phone: normalizePhone(t.phone) || "" };
 }
 
 // =====================================================================
@@ -270,10 +305,14 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
   const to = `whatsapp:${phone}`;
   const key = phoneKey(to);
 
-  const firstName = (data.name || "").split(" ")[0];
+  const firstName = (data.name || "").split(" ")[0] || "";
+  const treatmentLabel = data.treatment ? "ה" + data.treatment : "הטיפול";
+  // Same text as the approved template, kept locally for the conversation log
   const opening =
-    `היי${firstName ? " " + firstName : ""} 💛 זאת נועה מ-ARIA Clinic.\n` +
-    `רציתי לבדוק איך את מרגישה אחרי ${data.treatment ? "ה" + data.treatment : "הטיפול"}? הכל בסדר באזור הטיפול?`;
+    `היי ${firstName} 💛 זאת נועה, הנציגה הדיגיטלית של ARIA Clinic.\n` +
+    `רציתי לבדוק איך את מרגישה אחרי ${treatmentLabel}? הכל בסדר באזור הטיפול?`;
+
+  const therapist = await getTherapist(data.therapistId);
 
   await db.collection(CONVERSATIONS).doc(key).set(
     {
@@ -283,6 +322,9 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
       patientId: data.patientId || "",
       treatment: data.treatment || "",
       treatmentDate: data.treatmentDate || "",
+      therapistId: therapist?.id || "",
+      therapistName: therapist?.name || data.therapistName || "",
+      therapistPhone: therapist?.phone || "",
       status: "open",
       lastRisk: "ok",
       messages: [{ role: "assistant", text: opening, at: new Date().toISOString() }],
@@ -293,7 +335,7 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
   );
 
   try {
-    await sendWhatsApp(sid, token, to, opening);
+    await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel });
     await ref.update({ sentAt: admin.firestore.FieldValue.serverTimestamp(), status: "sent" });
   } catch (e) {
     logger.error("Opening message failed", e);
@@ -368,13 +410,20 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
       const d = snap.data();
       if (d.status !== "scheduled") return; // already sent – don't touch
       const treatments = Array.from(new Set([...(d.treatments || []), treatmentLabel]));
-      tx.update(ref, { treatments, treatment: treatments.join(", ") });
+      const upd = { treatments, treatment: treatments.join(", ") };
+      if (!d.therapistId && t.therapistId) {
+        upd.therapistId = t.therapistId;
+        upd.therapistName = t.therapistName || "";
+      }
+      tx.update(ref, upd);
       return;
     }
     tx.set(ref, {
       phone,
       name: patient.name || t.patientName || "",
       patientId: t.patientId,
+      therapistId: t.therapistId || "",
+      therapistName: t.therapistName || "",
       treatments: [treatmentLabel],
       treatment: treatmentLabel,
       treatmentDate: dateKey,

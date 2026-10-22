@@ -2,18 +2,20 @@
 import React, { useState, useCallback } from "react";
 import toast from "react-hot-toast";
 import { useCameraScanner, useUSBScanner } from "../hooks/useBarcodeScanner";
-import { useInventory, useTreatments, usePatients } from "../hooks/useFirestore";
+import { useInventory, useTreatments, usePatients, useTherapists } from "../hooks/useFirestore";
 import TreatmentCard from "../components/TreatmentCard";
 
 export default function ScanTab({ user }) {
   const { items, findByBarcode, decrementQty, useBotoxUnits } = useInventory();
   const { patients } = usePatients();
   const { treatments, addTreatment } = useTreatments();
+  const { therapists } = useTherapists();
 
   const [manualBarcode, setManualBarcode] = useState("");
   const [searchName, setSearchName] = useState("");
   const [scannedItem, setScannedItem] = useState(null);
   const [patientId, setPatientId] = useState("");
+  const [therapistId, setTherapistId] = useState(() => { try { return localStorage.getItem("lastTherapistId") || ""; } catch { return ""; } });
   const [dose, setDose] = useState("1");
   const [customUnits, setCustomUnits] = useState("");
   const [note, setNote] = useState("");
@@ -55,6 +57,7 @@ export default function ScanTab({ user }) {
 
   async function confirmTreatment() {
     if (!scannedItem || !patientId) return;
+    if (!therapistId) { toast.error("יש לבחור מטפל/ת"); return; }
     const actualDose = isBotox(scannedItem) ? parseFloat(customUnits) : parseFloat(dose);
     if (isBotox(scannedItem) && (!customUnits || actualDose <= 0)) {
       toast.error("יש להזין כמות יחידות"); return;
@@ -67,6 +70,7 @@ export default function ScanTab({ user }) {
       toast.error(`לא ניתן להשתמש ב-${actualDose} יחידות — יש רק ${scannedItem.qty}`); return;
     }
     const patient = patients.find(p => p.id === patientId);
+    const therapistDoc = therapists.find(t => t.id === therapistId);
     setSaving(true);
     try {
       let remainingAfter;
@@ -86,9 +90,12 @@ export default function ScanTab({ user }) {
         dose: actualDose,
         note,
         therapist: user.email,
+        therapistId,
+        therapistName: therapistDoc?.name || "",
         remainingAfter,
       });
       toast.success("הטיפול נשמר בהצלחה ✅");
+      try { localStorage.setItem("lastTherapistId", therapistId); } catch {}
 
       if (isBotox(scannedItem)) {
         if (remainingAfter <= scannedItem.threshold * (scannedItem.unitsPerVial || 1)) {
@@ -184,6 +191,13 @@ export default function ScanTab({ user }) {
               </select>
             </div>
             <div>
+              <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>מטפל/ת</label>
+              <select value={therapistId} onChange={e => setTherapistId(e.target.value)}>
+                <option value="">— בחר מטפל/ת —</option>
+                {therapists.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div>
               <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>
                 {isBotox(scannedItem) ? `כמות יחידות שהוזרקו (מתוך ${availableUnits(scannedItem)})` : "כמות לשימוש"}
               </label>
@@ -208,7 +222,7 @@ export default function ScanTab({ user }) {
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirmTreatment} disabled={!patientId || saving}>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirmTreatment} disabled={!patientId || !therapistId || saving}>
               {saving ? <div className="spinner" style={{ width: 18, height: 18, borderTopColor: "#fff" }} /> : "✅ אשר טיפול"}
             </button>
             <button className="btn btn-secondary" onClick={() => { setScannedItem(null); setCustomUnits(""); }}>ביטול</button>
