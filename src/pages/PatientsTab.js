@@ -21,6 +21,11 @@ export default function PatientsTab() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.name) { toast.error("שם חובה"); return; }
+    if (form.phone) {
+      const digits = form.phone.replace(/\D/g, "");
+      const ok = /^0?5\d{8}$/.test(digits) || /^9725\d{8}$/.test(digits);
+      if (!ok) { toast.error("מספר הטלפון לא תקין – נייד ישראלי הוא 10 ספרות (05X-XXXXXXX)"); return; }
+    }
     setSaving(true);
     try {
       await addPatient(form);

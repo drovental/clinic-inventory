@@ -11,6 +11,8 @@ const RISK = {
   ok:        { label: "תקין",          badge: "badge-ok",     color: "var(--success, #16a34a)" },
 };
 
+const STAGE_LABEL = { day1: "יום אחרי", mid: "ביניים", final: "סיכום" };
+
 const FOLLOWUP_STATUS = {
   scheduled: { label: "מתוזמן",   badge: "badge-info" },
   sending:   { label: "נשלח...",  badge: "badge-info" },
@@ -37,6 +39,33 @@ export default function FollowupTab() {
   const { patients } = usePatients();
   const { therapists, addTherapist, deleteTherapist } = useTherapists();
   const [showTherapists, setShowTherapists] = useState(false);
+  const [protocols, setProtocols] = useState([]);
+  const [showProtocols, setShowProtocols] = useState(false);
+  const [editProto, setEditProto] = useState(null); // {id, name, match, steps}
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "followupProtocols"), snap =>
+      setProtocols(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.id === "default") - (b.id === "default"))));
+    return unsub;
+  }, []);
+
+  async function saveProtocol() {
+    if (!editProto) return;
+    const steps = (editProto.steps || []).filter(st => st.day > 0).sort((a, b) => a.day - b.day);
+    if (steps.length === 0) { toast.error("צריך לפחות שלב אחד"); return; }
+    // stage is derived from position: first = day1, last = final, others = mid
+    const normalized = steps.map((st, i) => ({
+      day: Number(st.day), focus: st.focus || "",
+      stage: i === 0 ? "day1" : i === steps.length - 1 ? "final" : "mid",
+    }));
+    const match = (typeof editProto.match === "string" ? editProto.match.split(",") : editProto.match || [])
+      .map(m => m.trim()).filter(Boolean);
+    try {
+      await updateDoc(doc(db, "followupProtocols", editProto.id), { name: editProto.name, match, steps: normalized, enabled: editProto.enabled !== false });
+      toast.success("הפרוטוקול נשמר");
+      setEditProto(null);
+    } catch (e) { toast.error("שגיאה: " + e.message); }
+  }
   const [newTherapist, setNewTherapist] = useState({ name: "", phone: "" });
   const [newTherapistId, setNewTherapistId] = useState("");
 
@@ -179,12 +208,69 @@ export default function FollowupTab() {
         )}
       </div>
 
+      <div className="card" style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setShowProtocols(!showProtocols)}>
+          <h3 style={{ fontSize: "0.95rem", margin: 0 }}>📅 פרוטוקולי מעקב ({protocols.length})</h3>
+          <span style={{ color: "var(--text-tertiary)" }}>{showProtocols ? "▲" : "▼"}</span>
+        </div>
+        {showProtocols && (
+          <div style={{ marginTop: 10 }}>
+            <p style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginBottom: 8 }}>
+              לכל סוג טיפול – באילו ימים נועה פונה ומה היא בודקת. הזיהוי לפי שם המוצר במלאי (מילות מפתח).
+            </p>
+            {protocols.map(p => (
+              <div key={p.id} style={{ padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+                {editProto?.id === p.id ? (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <input value={editProto.name} onChange={e => setEditProto({ ...editProto, name: e.target.value })} placeholder="שם הפרוטוקול" />
+                    {p.id !== "default" && (
+                      <input value={Array.isArray(editProto.match) ? editProto.match.join(", ") : editProto.match}
+                        onChange={e => setEditProto({ ...editProto, match: e.target.value })}
+                        placeholder="מילות מפתח לזיהוי המוצר, מופרדות בפסיק" />
+                    )}
+                    {(editProto.steps || []).map((st, i) => (
+                      <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <span style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>יום</span>
+                        <input type="number" min="1" value={st.day} style={{ width: 64 }}
+                          onChange={e => { const steps = [...editProto.steps]; steps[i] = { ...st, day: e.target.value }; setEditProto({ ...editProto, steps }); }} />
+                        <input value={st.focus || ""} placeholder="מה לבדוק בשלב הזה" style={{ flex: 1 }}
+                          onChange={e => { const steps = [...editProto.steps]; steps[i] = { ...st, focus: e.target.value }; setEditProto({ ...editProto, steps }); }} />
+                        <button className="btn btn-danger" style={{ fontSize: "0.7rem", padding: "2px 8px" }}
+                          onClick={() => setEditProto({ ...editProto, steps: editProto.steps.filter((_, j) => j !== i) })}>✕</button>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button className="btn btn-secondary" style={{ fontSize: "0.8rem" }}
+                        onClick={() => setEditProto({ ...editProto, steps: [...(editProto.steps || []), { day: "", focus: "" }] })}>＋ שלב</button>
+                      <button className="btn btn-primary" style={{ fontSize: "0.8rem", flex: 1 }} onClick={saveProtocol}>💾 שמור</button>
+                      <button className="btn btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => setEditProto(null)}>ביטול</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{p.name}{p.enabled === false ? " (כבוי)" : ""}</div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+                        {(p.steps || []).map(st => `יום ${st.day}`).join(" · ")}
+                        {p.match?.length ? ` · ${p.match.slice(0, 3).join(", ")}${p.match.length > 3 ? "…" : ""}` : ""}
+                      </div>
+                    </div>
+                    <button className="btn btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+                      onClick={() => setEditProto({ ...p, steps: (p.steps || []).map(st => ({ ...st })) })}>ערוך</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {pending.length > 0 && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h3 style={{ marginBottom: 8, fontSize: "0.95rem" }}>מעקבים ממתינים</h3>
           {pending.map(f => (
             <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.8rem", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-              <span>{f.name} · {f.treatment || "טיפול"}</span>
+              <span>{f.name} · {f.treatment || "טיפול"}{f.stage ? <span className="badge badge-info" style={{ marginRight: 6, fontSize: "0.65rem" }}>{STAGE_LABEL[f.stage] || f.stage}{f.dayOffset ? ` · יום ${f.dayOffset}` : ""}</span> : null}</span>
               <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 {f.scheduledFor && <span style={{ color: "var(--text-secondary)" }}>{fmtDate(f.scheduledFor)}</span>}
                 <span className={`badge ${FOLLOWUP_STATUS[f.status]?.badge || "badge-info"}`}>{FOLLOWUP_STATUS[f.status]?.label || f.status}</span>
@@ -217,7 +303,7 @@ export default function FollowupTab() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>{c.name || "+" + c.phone}</div>
                 <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                  {c.treatment || "טיפול"}{c.therapistName ? ` · ${c.therapistName}` : ""} · {fmtDate(c.updatedAt)}
+                  {c.treatment || "טיפול"}{c.stage ? ` · ${STAGE_LABEL[c.stage] || c.stage}` : ""}{c.therapistName ? ` · ${c.therapistName}` : ""} · {fmtDate(c.updatedAt)}
                 </div>
                 {c.lastSummary && <div style={{ fontSize: "0.8rem", marginTop: 4 }}>{c.lastSummary}</div>}
               </div>

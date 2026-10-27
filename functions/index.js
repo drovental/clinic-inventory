@@ -28,9 +28,19 @@ const ALERT_WHATSAPP_TO = defineSecret("ALERT_WHATSAPP_TO"); // comma-separated
 // ---- Config ----
 // ARIA Clinic's registered WhatsApp Business sender
 const WHATSAPP_FROM = "whatsapp:+972523617231";
-// Approved WhatsApp template for the business-initiated opening message.
+// Approved WhatsApp templates for business-initiated messages, per follow-up stage.
 // Variables: {{1}} = first name, {{2}} = treatment
-const OPENING_TEMPLATE_SID = "HX33e8aed946f18a25c62f63edd5a0e00b";
+// Set with: firebase functions:secrets:set WA_TEMPLATES  (JSON: {"day1":"HX..","mid":"HX..","final":"HX.."})
+// Fallback: the original opening template for every stage until the new ones are approved.
+const LEGACY_OPENING_TEMPLATE_SID = "HX33e8aed946f18a25c62f63edd5a0e00b";
+const WA_TEMPLATES = defineSecret("WA_TEMPLATES");
+function templateFor(stage) {
+  try {
+    const map = JSON.parse(WA_TEMPLATES.value() || "{}");
+    if (stage === "alert") return map.alert || null; // no fallback for staff alerts
+    return map[stage] || map.day1 || LEGACY_OPENING_TEMPLATE_SID;
+  } catch { return stage === "alert" ? null : LEGACY_OPENING_TEMPLATE_SID; }
+}
 const WEBHOOK_URL = "https://europe-west1-aria-inventory.cloudfunctions.net/whatsappWebhook";
 const CLAUDE_MODEL = "claude-sonnet-5-5";
 const CONVERSATIONS = "whatsappConversations";
@@ -38,19 +48,66 @@ const FOLLOWUPS = "whatsappFollowups";
 const TREATMENTS = "treatments"; // written by the inventory app
 const PATIENTS = "patients";     // written by the inventory app
 const MAX_HISTORY = 30;
-// When to send the follow-up: next day at this hour (Israel time)
+// Follow-ups are sent at this hour (Israel time) on the protocol's day offsets
 const FOLLOWUP_HOUR = 11;
 const TIMEZONE = "Asia/Jerusalem";
+const PROTOCOLS = "followupProtocols"; // editable from the app; defaults below are seeded on first run
+
+// Default follow-up protocols. `match` = substrings (case-insensitive) of the inventory product name.
+// Each step: day offset from treatment, stage (day1 | mid | final), and what Noa should focus on.
+const DEFAULT_PROTOCOLS = [
+  { id: "botox", name: "בוטוקס", match: ["dysport", "xeomin", "botox", "בוטוקס", "דיספורט", "קסאומין"],
+    steps: [
+      { day: 1,  stage: "day1",  focus: "תחושה באזור ההזרקה, נפיחות, שטפי דם, כאב ראש, קושי בהבעה." },
+      { day: 3,  stage: "mid",   focus: "הבוטוקס מתחיל לפעול. לשאול אם מרגישה שינוי, אסימטריה, גבה/עפעף שצנחו, או הבעה שנראית לא טבעית." },
+      { day: 13, stage: "final", focus: "התוצאה הסופית. שביעות רצון מהמראה, אסימטריה, ולהזכיר בחום שמחר יש ביקורת בקליניקה." },
+    ] },
+  { id: "radiesse", name: "רדיאס", match: ["radiesse", "רדיאס"],
+    steps: [
+      { day: 1,  stage: "day1",  focus: "נפיחות, שטפי דם, כאב, גושים או קשיות מתחת לעור, אדמומיות." },
+      { day: 30, stage: "final", focus: "התוצאה אחרי חודש. האם רואה שיפור במתאר/עומק, גושים שנותרו, ושביעות רצון כללית." },
+    ] },
+  { id: "skinbooster", name: "סקין בוסטר", match: ["profhilo", "פרופילו", "skin booster", "סקין בוסטר"],
+    steps: [
+      { day: 1,  stage: "day1",  focus: "גבשושיות קטנות בנקודות ההזרקה (צפוי), נפיחות, שטפי דם." },
+      { day: 7,  stage: "mid",   focus: "הגבשושיות אמורות להיספג. לשאול אם נותרו, ואיך העור מרגיש." },
+      { day: 28, stage: "final", focus: "לחות, זוהר ומרקם העור. שביעות רצון, ולהזכיר שהטיפול השני מומלץ כחודש אחרי הראשון." },
+    ] },
+  { id: "pn", name: "פולינוקלאוטידים", match: ["rejuran", "vitaran", "ריג'ורן", "פולינוקלאוטיד"],
+    steps: [
+      { day: 1,  stage: "day1",  focus: "אדמומיות, גבשושיות בנקודות ההזרקה, רגישות." },
+      { day: 7,  stage: "mid",   focus: "הגבשושיות אמורות להיספג. אדמומיות שנותרה, גרד, איך העור מרגיש." },
+      { day: 21, stage: "final", focus: "מרקם ואיכות העור. שביעות רצון, ולהזכיר שסדרת הטיפולים ממשיכה בעוד כ-3 שבועות." },
+    ] },
+  { id: "dermapen", name: "דרמפן + אקסוזומים", match: ["dermapen", "דרמפן", "exosome", "אקסוזום", "אקזוזום", "microneedling"],
+    steps: [
+      { day: 1,  stage: "day1",  focus: "אדמומיות, תחושת צריבה או חום, יובש. להזכיר: בלי איפור, בלי שמש, לחות עדינה בלבד." },
+      { day: 3,  stage: "mid",   focus: "קילוף קל (צפוי), אדמומיות שנותרה, פצעונים או גירוי חריג." },
+      { day: 14, stage: "final", focus: "מרקם העור, זוהר, צלקות/כתמים. שביעות רצון מהתוצאה." },
+    ] },
+  { id: "polidocanol", name: "פולידוקנול (נימים)", match: ["polidocanol", "פולידוקנול", "aethoxysklerol", "סקלרו"],
+    steps: [
+      { day: 1,  stage: "day1",  focus: "כאב, נפיחות או קשיות לאורך הווריד, אדמומיות, גרבי לחץ אם הומלצו." },
+      { day: 7,  stage: "mid",   focus: "שינוי צבע (חום/כהה לאורך הווריד – צפוי), גושים, גרד, פצע או כיב (לא תקין!)." },
+      { day: 30, stage: "final", focus: "האם הנימים נעלמו או דהו, כתמים שנותרו, שביעות רצון. להזכיר שלעתים צריך טיפול נוסף." },
+    ] },
+  { id: "default", name: "טיפול כללי", match: [],
+    steps: [
+      { day: 1,  stage: "day1",  focus: "איך מרגישה אחרי הטיפול – כאב, נפיחות, אדמומיות, כל דבר חריג." },
+    ] },
+];
+
+const STAGE_LABEL = { day1: "יום אחרי", mid: "מעקב ביניים", final: "סיכום" };
 
 // ---- Persona / system prompt (Hebrew) ----
-const SYSTEM_PROMPT = `את "נועה", הנציגה הדיגיטלית של ARIA Clinic, קליניקה לאסתטיקה רפואית. את לא מסתירה שאת נציגה דיגיטלית – זו זהותך, ואת מציגה אותה בטבעיות.
+const SYSTEM_PROMPT = `את "נועה", העוזרת הדיגיטלית של קליניקת ARIA, קליניקה לאסתטיקה רפואית. את לא מסתירה שאת עוזרת דיגיטלית – זו זהותך, ואת מציגה אותה בטבעיות.
 את מנהלת שיחת ווטסאפ עם לקוחה שעברה טיפול אסתטי בקליניקה לאחרונה. מטרת השיחה: לבדוק איך היא מרגישה אחרי הטיפול, לזהות בעיות או תופעות לוואי, ולתת תחושה שאכפת לנו.
 
 סגנון:
 - עברית טבעית, חמה, אנושית וקצרה – כמו הודעת ווטסאפ אמיתית, לא כמו טופס. משפט אחד עד שלושה. בלי רשימות, בלי כותרות.
 - פנייה בלשון נקבה כברירת מחדל (רוב הלקוחות נשים). אם ברור שמדובר בגבר – עברי ללשון זכר.
 - שאלה אחת בכל פעם. אל תחזרי על שאלות שכבר נענו.
-- הזדהי כ"נועה, הנציגה הדיגיטלית של ARIA Clinic". אם שואלים אם את בוט או אדם – אשרי בכנות שאת נציגה דיגיטלית, ושד"ר עמית והצוות רואים את השיחה ומקבלים עדכון על כל דבר חריג.
+- הזדהי כ"נועה, העוזרת הדיגיטלית של קליניקת ARIA". אם שואלים אם את בוט או אדם – אשרי בכנות שאת עוזרת דיגיטלית, ושד"ר עמית והצוות רואים את השיחה ומקבלים עדכון על כל דבר חריג.
 - אל תתני אבחנות או הנחיות רפואיות מעבר להנחיות הכלליות שאחרי טיפול (קירור עדין, להימנע מלחץ על האזור, להימנע מחום/ספורט ב-24 שעות). אל תמליצי על תרופות.
 - אם משהו לא תקין – הרגיעי, הסבירי שהרופא מקבל עדכון מיידי ויחזור אליה, ובמקרה דחוף בקשי ממנה להתקשר לקליניקה מיד.
 - כשברור שהכל בסדר – סיימי בחום, הזכירי שאפשר לכתוב לנו בכל שאלה, וסמני שהשיחה הסתיימה.
@@ -98,9 +155,16 @@ const riskLabel = { ok: "תקין", attention: "דורש תשומת לב ⚠️"
 
 async function askClaude(apiKey, conv) {
   const client = new Anthropic({ apiKey });
+  const stageLine = conv.stage
+    ? `\nשלב המעקב: ${STAGE_LABEL[conv.stage] || conv.stage}${conv.dayOffset ? ` (יום ${conv.dayOffset} אחרי הטיפול)` : ""}.` +
+      (conv.focus ? `\nמה חשוב לבדוק בשלב הזה: ${conv.focus}` : "") +
+      (conv.stage !== "day1"
+        ? `\nזו לא השיחה הראשונה עם הלקוחה – היא כבר מכירה אותך. אל תציגי את עצמך מחדש באריכות; התייחסי לזמן שעבר מאז הטיפול.`
+        : "")
+    : "";
   const context = `פרטי הלקוחה: שם – ${conv.name || "לא ידוע"}. טיפול – ${conv.treatment || "לא צוין"}. ${
     conv.treatmentDate ? "תאריך הטיפול – " + conv.treatmentDate + "." : ""
-  }`;
+  }${stageLine}`;
 
   const messages = conv.messages.slice(-MAX_HISTORY).map((m) => ({
     role: m.role === "client" ? "user" : "assistant",
@@ -147,12 +211,12 @@ async function sendWhatsApp(sid, token, to, body) {
 }
 
 // Business-initiated message: must use an approved template
-async function sendWhatsAppTemplate(sid, token, to, variables) {
+async function sendWhatsAppTemplate(sid, token, to, variables, stage = "day1") {
   const client = twilio(sid, token);
   return client.messages.create({
     from: WHATSAPP_FROM,
     to,
-    contentSid: OPENING_TEMPLATE_SID,
+    contentSid: templateFor(stage),
     contentVariables: JSON.stringify(variables),
   });
 }
@@ -163,6 +227,7 @@ async function alertDoctor({ sid, token, recipients, conv, result, lastClientTex
     `לקוחה: ${conv.name || "לא ידוע"}\n` +
     `טלפון: +${conv.phone}\n` +
     `טיפול: ${conv.treatment || "לא צוין"}\n` +
+    (conv.stage ? `שלב: ${STAGE_LABEL[conv.stage] || conv.stage}${conv.dayOffset ? ` (יום ${conv.dayOffset})` : ""}\n` : "") +
     (conv.therapistName ? `מטפל/ת: ${conv.therapistName}\n` : "") +
     `\nסיכום: ${result.summary}\n\n` +
     `ההודעה האחרונה שלה: "${lastClientText}"`;
@@ -180,12 +245,29 @@ async function alertDoctor({ sid, token, recipients, conv, result, lastClientTex
     })
     .filter((to) => to && !seen.has(to) && seen.add(to));
 
+  // WhatsApp only delivers free-form messages to people who wrote to Noa in the last 24h.
+  // The approved alert template always arrives, so it is the primary channel for everyone;
+  // the rich free-form version is sent in addition (it arrives when the window is open).
+  const alertVars = {
+    1: riskLabel[result.risk] || result.risk,
+    2: conv.name || "לא ידוע",
+    3: conv.treatment || "לא צוין",
+    4: String(result.summary || "").slice(0, 300),
+  };
+  const alertTpl = templateFor("alert");
+  const hasAlertTpl = Boolean(alertTpl);
+
   await Promise.all(
-    targets.map((to) =>
-      sendWhatsApp(sid, token, to, text).catch((e) =>
-        logger.error("Alert send failed", { to, err: e.message })
-      )
-    )
+    targets.map(async (to) => {
+      if (hasAlertTpl) {
+        await sendWhatsAppTemplate(sid, token, to, alertVars, "alert").catch((e) =>
+          logger.error("Alert template failed", { to, err: e.message })
+        );
+      }
+      await sendWhatsApp(sid, token, to, text).catch((e) =>
+        logger.error("Alert free-form failed", { to, err: e.message })
+      );
+    })
   );
 }
 
@@ -202,7 +284,7 @@ async function getTherapist(therapistId) {
 // 1) Incoming WhatsApp messages from clients (Twilio webhook)
 // =====================================================================
 exports.whatsappWebhook = onRequest(
-  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ANTHROPIC_API_KEY, ALERT_WHATSAPP_TO] },
+  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ANTHROPIC_API_KEY, ALERT_WHATSAPP_TO, WA_TEMPLATES] },
   async (req, res) => {
     if (req.method !== "POST") return res.status(405).send("Method not allowed");
 
@@ -307,35 +389,53 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
 
   const firstName = (data.name || "").split(" ")[0] || "";
   const treatmentLabel = data.treatment ? "ה" + data.treatment : "הטיפול";
-  // Same text as the approved template, kept locally for the conversation log
-  const opening =
-    `היי ${firstName} 💛 זאת נועה, הנציגה הדיגיטלית של ARIA Clinic.\n` +
-    `רציתי לבדוק איך את מרגישה אחרי ${treatmentLabel}? הכל בסדר באזור הטיפול?`;
+  const stage = data.stage || "day1";
+  const dayOffset = data.dayOffset || 1;
+
+  // Local copy of what the approved template says, for the conversation log
+  const openings = {
+    day1: `היי ${firstName} 💛 זאת נועה, העוזרת הדיגיטלית של קליניקת ARIA.\n` +
+          `רציתי לבדוק איך את מרגישה אחרי ${treatmentLabel}? הכל בסדר באזור הטיפול?`,
+    mid:  `היי ${firstName} 💛 זאת נועה מקליניקת ARIA. עברו כמה ימים מאז ${treatmentLabel} – איך את מרגישה? יש משהו שמטריד אותך?`,
+    final: `היי ${firstName} 💛 זאת נועה מקליניקת ARIA. רציתי לשמוע איך התוצאה של ${treatmentLabel} נראית לך עכשיו – מרוצה?`,
+  };
+  const opening = openings[stage] || openings.day1;
 
   const therapist = await getTherapist(data.therapistId);
+  const convRef = db.collection(CONVERSATIONS).doc(key);
+  const existing = await convRef.get();
+  const prev = existing.exists ? existing.data() : null;
+  // Continue the same conversation thread if it is for the same treatment episode
+  const sameEpisode = prev && prev.treatmentDate && prev.treatmentDate === (data.treatmentDate || "");
+  const prevMessages = sameEpisode ? (prev.messages || []).slice(-MAX_HISTORY) : [];
+  const protocolStep = data.protocolStepFocus || "";
 
-  await db.collection(CONVERSATIONS).doc(key).set(
+  await convRef.set(
     {
       phone: key,
       whatsapp: to,
-      name: data.name || "",
-      patientId: data.patientId || "",
-      treatment: data.treatment || "",
+      name: data.name || prev?.name || "",
+      patientId: data.patientId || prev?.patientId || "",
+      treatment: data.treatment || prev?.treatment || "",
       treatmentDate: data.treatmentDate || "",
-      therapistId: therapist?.id || "",
-      therapistName: therapist?.name || data.therapistName || "",
-      therapistPhone: therapist?.phone || "",
+      therapistId: therapist?.id || prev?.therapistId || "",
+      therapistName: therapist?.name || data.therapistName || prev?.therapistName || "",
+      therapistPhone: therapist?.phone || prev?.therapistPhone || "",
+      stage,
+      dayOffset,
+      focus: protocolStep,
       status: "open",
+      handled: false,
       lastRisk: "ok",
-      messages: [{ role: "assistant", text: opening, at: new Date().toISOString() }],
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      messages: [...prevMessages, { role: "assistant", text: opening, at: new Date().toISOString(), stage }],
+      createdAt: prev?.createdAt || admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: false }
   );
 
   try {
-    await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel });
+    await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel }, stage);
     await ref.update({ sentAt: admin.firestore.FieldValue.serverTimestamp(), status: "sent" });
   } catch (e) {
     logger.error("Opening message failed", e);
@@ -349,7 +449,7 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
 //    Docs that carry scheduledFor are sent later by sendScheduledFollowups.
 // =====================================================================
 exports.startFollowup = onDocumentCreated(
-  { document: `${FOLLOWUPS}/{id}`, secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN] },
+  { document: `${FOLLOWUPS}/{id}`, secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WA_TEMPLATES] },
   async (event) => {
     const data = event.data?.data();
     if (!data || !data.phone) return;
@@ -368,21 +468,38 @@ exports.startFollowup = onDocumentCreated(
 //    for the next day at FOLLOWUP_HOUR. Several products for the same patient
 //    on the same day are merged into one follow-up.
 // =====================================================================
-function nextDayAt(hour) {
-  // Compute "tomorrow at HH:00" in Israel time, returned as a JS Date (UTC instant)
+// "Day N after today at HH:00" in Israel time, returned as a UTC Date
+function dayOffsetAt(daysAhead, hour) {
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(now).reduce((o, p) => ((o[p.type] = p.value), o), {});
-  const tomorrow = new Date(Date.UTC(+parts.year, +parts.month - 1, +parts.day + 1, hour, 0, 0));
-  // Israel offset at that moment (UTC+2 or UTC+3)
+  const target = new Date(Date.UTC(+parts.year, +parts.month - 1, +parts.day + daysAhead, hour, 0, 0));
   const offsetMin = (() => {
     const s = new Intl.DateTimeFormat("en-US", { timeZone: TIMEZONE, timeZoneName: "shortOffset" })
-      .formatToParts(tomorrow).find((p) => p.type === "timeZoneName")?.value || "GMT+2";
+      .formatToParts(target).find((p) => p.type === "timeZoneName")?.value || "GMT+2";
     const m = s.match(/([+-])(\d+)(?::(\d+))?/);
     return m ? (m[1] === "-" ? -1 : 1) * (+m[2] * 60 + (+m[3] || 0)) : 120;
   })();
-  return new Date(tomorrow.getTime() - offsetMin * 60 * 1000);
+  return new Date(target.getTime() - offsetMin * 60 * 1000);
+}
+
+// Load protocols from Firestore (seeding defaults on first run), then pick the one matching a product name
+async function loadProtocols() {
+  const snap = await db.collection(PROTOCOLS).get();
+  if (snap.empty) {
+    const batch = db.batch();
+    DEFAULT_PROTOCOLS.forEach((p) => batch.set(db.collection(PROTOCOLS).doc(p.id), { ...p, createdAt: admin.firestore.FieldValue.serverTimestamp() }));
+    await batch.commit();
+    return DEFAULT_PROTOCOLS;
+  }
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((p) => p.enabled !== false);
+}
+
+function pickProtocol(protocols, productName) {
+  const name = String(productName || "").toLowerCase();
+  const hit = protocols.find((p) => (p.match || []).some((m) => m && name.includes(String(m).toLowerCase())));
+  return hit || protocols.find((p) => p.id === "default") || DEFAULT_PROTOCOLS[DEFAULT_PROTOCOLS.length - 1];
 }
 
 exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (event) => {
@@ -400,46 +517,64 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
   if (patient.noFollowup === true) return; // opt-out flag on the patient record
 
   const dateKey = new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(new Date()); // YYYY-MM-DD
-  const followupId = `${t.patientId}_${dateKey}`;
-  const ref = db.collection(FOLLOWUPS).doc(followupId);
   const treatmentLabel = [t.productName, t.note].filter(Boolean).join(" – ");
+  const protocols = await loadProtocols();
+  const protocol = pickProtocol(protocols, t.productName);
+  logger.info("Scheduling follow-ups", { patientId: t.patientId, product: t.productName, protocol: protocol.id });
 
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (snap.exists) {
-      const d = snap.data();
-      if (d.status !== "scheduled") return; // already sent – don't touch
-      const treatments = Array.from(new Set([...(d.treatments || []), treatmentLabel]));
-      const upd = { treatments, treatment: treatments.join(", ") };
-      if (!d.therapistId && t.therapistId) {
-        upd.therapistId = t.therapistId;
-        upd.therapistName = t.therapistName || "";
+  // One follow-up doc per protocol step. ID = patient_date_stage so several products on the same day merge.
+  for (const step of protocol.steps || []) {
+    const ref = db.collection(FOLLOWUPS).doc(`${t.patientId}_${dateKey}_${step.stage}`);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists) {
+        const d = snap.data();
+        if (d.status !== "scheduled") return; // already sent – don't touch
+        const treatments = Array.from(new Set([...(d.treatments || []), treatmentLabel]));
+        const upd = { treatments, treatment: treatments.join(", ") };
+        // If a second product has a longer protocol, keep the later of the two dates for this stage
+        const existingDay = d.dayOffset || 0;
+        if (step.day > existingDay) {
+          upd.dayOffset = step.day;
+          upd.scheduledFor = admin.firestore.Timestamp.fromDate(dayOffsetAt(step.day, FOLLOWUP_HOUR));
+          upd.protocolStepFocus = step.focus || "";
+          upd.protocolId = protocol.id;
+        }
+        if (!d.therapistId && t.therapistId) {
+          upd.therapistId = t.therapistId;
+          upd.therapistName = t.therapistName || "";
+        }
+        tx.update(ref, upd);
+        return;
       }
-      tx.update(ref, upd);
-      return;
-    }
-    tx.set(ref, {
-      phone,
-      name: patient.name || t.patientName || "",
-      patientId: t.patientId,
-      therapistId: t.therapistId || "",
-      therapistName: t.therapistName || "",
-      treatments: [treatmentLabel],
-      treatment: treatmentLabel,
-      treatmentDate: dateKey,
-      status: "scheduled",
-      scheduledFor: admin.firestore.Timestamp.fromDate(nextDayAt(FOLLOWUP_HOUR)),
-      source: "auto",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      tx.set(ref, {
+        phone,
+        name: patient.name || t.patientName || "",
+        patientId: t.patientId,
+        therapistId: t.therapistId || "",
+        therapistName: t.therapistName || "",
+        treatments: [treatmentLabel],
+        treatment: treatmentLabel,
+        treatmentDate: dateKey,
+        protocolId: protocol.id,
+        protocolName: protocol.name || "",
+        stage: step.stage,
+        dayOffset: step.day,
+        protocolStepFocus: step.focus || "",
+        status: "scheduled",
+        scheduledFor: admin.firestore.Timestamp.fromDate(dayOffsetAt(step.day, FOLLOWUP_HOUR)),
+        source: "auto",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     });
-  });
+  }
 });
 
 // =====================================================================
 // 4) Hourly: send scheduled follow-ups whose time has come
 // =====================================================================
 exports.sendScheduledFollowups = onSchedule(
-  { schedule: "every 1 hours", timeZone: TIMEZONE, secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN] },
+  { schedule: "every 1 hours", timeZone: TIMEZONE, secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WA_TEMPLATES] },
   async () => {
     const now = admin.firestore.Timestamp.now();
     const due = await db
