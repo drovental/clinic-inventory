@@ -38,7 +38,7 @@ function templateFor(stage) {
   try {
     const map = JSON.parse(WA_TEMPLATES.value() || "{}");
     if (stage === "alert") return map.alert || null; // no fallback for staff alerts
-    if (stage === "day0") return map.day0 || null;   // media template; no fallback (sent only when approved)
+    if (stage === "day0") return null; // resolved per protocol in aftercareTemplateFor()
     return map[stage] || map.day1 || LEGACY_OPENING_TEMPLATE_SID;
   } catch { return stage === "alert" ? null : LEGACY_OPENING_TEMPLATE_SID; }
 }
@@ -243,14 +243,23 @@ async function sendWhatsAppTemplate(sid, token, to, variables, stage = "day1") {
 }
 
 // Aftercare PDF: business-initiated → media template (variables: 1=name, 2=treatment; media URL is baked in the template per protocol? No – Twilio media templates take the URL as a variable)
-async function sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, pdfUrl }) {
+// WA_TEMPLATES.day0 is a map { protocolId: "HX..." } – one media template per treatment (fixed PDF URL each)
+function aftercareTemplateFor(protocolId) {
+  try {
+    const map = JSON.parse(WA_TEMPLATES.value() || "{}");
+    const d0 = map.day0;
+    if (!d0) return null;
+    if (typeof d0 === "string") return d0;
+    return d0[protocolId] || null;
+  } catch { return null; }
+}
+async function sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, protocolId }) {
   const client = twilio(sid, token);
-  const tpl = templateFor("day0");
-  if (!tpl) throw new Error("No approved day0 media template configured (WA_TEMPLATES.day0)");
+  const tpl = aftercareTemplateFor(protocolId);
+  if (!tpl) throw new Error(`No approved aftercare template for protocol "${protocolId}" (WA_TEMPLATES.day0)`);
   return client.messages.create({
     from: WHATSAPP_FROM, to, contentSid: tpl,
-    // Template media URL is "https://aria-clinic-inventory.netlify.app/aftercare/{{3}}" – pass only the file name
-    contentVariables: JSON.stringify({ 1: firstName, 2: treatmentLabel, 3: String(pdfUrl).split("/").pop() }),
+    contentVariables: JSON.stringify({ 1: firstName, 2: treatmentLabel }),
   });
 }
 
@@ -444,12 +453,14 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
   const prevMessages = sameEpisode ? (prev.messages || []).slice(-MAX_HISTORY) : [];
   let protocolStep = data.protocolStepFocus || "";
   let protocolGuide = data.protocolGuide || prev?.guide || "";
-  if (!protocolGuide || !protocolStep) {
+  let protocolId = data.protocolId || prev?.protocolId || "";
+  if (!protocolGuide || !protocolStep || !protocolId) {
     // Manual follow-ups don't come through onTreatmentCreated – resolve the protocol here
     try {
       const protocols = await loadProtocols();
       const proto = pickProtocol(protocols, data.treatment || "");
       if (!protocolGuide) protocolGuide = proto.guide || "";
+      if (!protocolId) protocolId = proto.id || "";
       if (!protocolStep) protocolStep = (proto.steps || []).find((st) => st.stage === stage)?.focus || (proto.steps || [])[0]?.focus || "";
     } catch (e) { logger.warn("Protocol lookup failed", e.message); }
   }
@@ -469,6 +480,7 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
       dayOffset,
       focus: protocolStep,
       guide: protocolGuide,
+      protocolId,
       guideUrl: data.protocolGuideUrl || prev?.guideUrl || "",
       status: "open",
       handled: false,
@@ -482,9 +494,8 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
 
   try {
     if (stage === "day0") {
-      const pdfUrl = data.protocolGuideUrl || "";
-      if (!pdfUrl) { await ref.update({ status: "skipped", error: "no guideUrl" }); return; }
-      await sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, pdfUrl });
+      if (!aftercareTemplateFor(protocolId)) { await ref.update({ status: "skipped", error: "no aftercare template for " + protocolId }); return; }
+      await sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, protocolId });
     } else {
       await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel }, stage);
     }
