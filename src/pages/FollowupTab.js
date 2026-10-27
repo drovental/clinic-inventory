@@ -11,7 +11,7 @@ const RISK = {
   ok:        { label: "תקין",          badge: "badge-ok",     color: "var(--success, #16a34a)" },
 };
 
-const STAGE_LABEL = { day1: "יום אחרי", mid: "ביניים", final: "סיכום" };
+const STAGE_LABEL = { day0: "דף הנחיות", day1: "יום אחרי", mid: "ביניים", final: "סיכום" };
 
 const FOLLOWUP_STATUS = {
   scheduled: { label: "מתוזמן",   badge: "badge-info" },
@@ -51,17 +51,19 @@ export default function FollowupTab() {
 
   async function saveProtocol() {
     if (!editProto) return;
-    const steps = (editProto.steps || []).filter(st => st.day > 0).sort((a, b) => a.day - b.day);
-    if (steps.length === 0) { toast.error("צריך לפחות שלב אחד"); return; }
-    // stage is derived from position: first = day1, last = final, others = mid
-    const normalized = steps.map((st, i) => ({
+    const all = (editProto.steps || []).filter(st => st.day !== "" && Number(st.day) >= 0).sort((a, b) => a.day - b.day);
+    const day0 = all.filter(st => Number(st.day) === 0).slice(0, 1).map(st => ({ day: 0, focus: st.focus || "", stage: "day0" }));
+    const steps = all.filter(st => Number(st.day) > 0);
+    if (steps.length === 0) { toast.error("צריך לפחות שלב אחד אחרי יום הטיפול"); return; }
+    // stage is derived from position: day 0 = aftercare PDF, first = day1, last = final, others = mid
+    const normalized = [...day0, ...steps.map((st, i) => ({
       day: Number(st.day), focus: st.focus || "",
       stage: i === 0 ? "day1" : i === steps.length - 1 ? "final" : "mid",
-    }));
+    }))];
     const match = (typeof editProto.match === "string" ? editProto.match.split(",") : editProto.match || [])
       .map(m => m.trim()).filter(Boolean);
     try {
-      await updateDoc(doc(db, "followupProtocols", editProto.id), { name: editProto.name, match, steps: normalized, guide: editProto.guide || "", enabled: editProto.enabled !== false });
+      await updateDoc(doc(db, "followupProtocols", editProto.id), { name: editProto.name, match, steps: normalized, guide: editProto.guide || "", guideUrl: editProto.guideUrl || "", enabled: editProto.enabled !== false });
       toast.success("הפרוטוקול נשמר");
       setEditProto(null);
     } catch (e) { toast.error("שגיאה: " + e.message); }
@@ -228,6 +230,7 @@ export default function FollowupTab() {
                         onChange={e => setEditProto({ ...editProto, match: e.target.value })}
                         placeholder="מילות מפתח לזיהוי המוצר, מופרדות בפסיק" />
                     )}
+                    <input value={editProto.guideUrl || ""} onChange={e => setEditProto({ ...editProto, guideUrl: e.target.value })} placeholder="קישור לדף ההנחיות (PDF) – נשלח ביום הטיפול" style={{ fontSize: "0.8rem", direction: "ltr" }} />
                     <textarea value={editProto.guide || ""} rows={5} style={{ fontSize: "0.8rem" }}
                       onChange={e => setEditProto({ ...editProto, guide: e.target.value })}
                       placeholder="הנחיות הקליניקה לטיפול הזה (מה שנועה רשאית למסור ללקוחה): שעות ראשונות, מה אסור, מה צפוי, מתי לפנות" />
@@ -254,7 +257,7 @@ export default function FollowupTab() {
                     <div>
                       <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{p.name}{p.enabled === false ? " (כבוי)" : ""}</div>
                       <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                        {(p.steps || []).map(st => `יום ${st.day}`).join(" · ")}
+                        {(p.steps || []).map(st => st.day === 0 ? "📄 יום הטיפול" : `יום ${st.day}`).join(" · ")}
                         {p.match?.length ? ` · ${p.match.slice(0, 3).join(", ")}${p.match.length > 3 ? "…" : ""}` : ""}
                       </div>
                     </div>

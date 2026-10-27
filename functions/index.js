@@ -38,6 +38,7 @@ function templateFor(stage) {
   try {
     const map = JSON.parse(WA_TEMPLATES.value() || "{}");
     if (stage === "alert") return map.alert || null; // no fallback for staff alerts
+    if (stage === "day0") return map.day0 || null;   // media template; no fallback (sent only when approved)
     return map[stage] || map.day1 || LEGACY_OPENING_TEMPLATE_SID;
   } catch { return stage === "alert" ? null : LEGACY_OPENING_TEMPLATE_SID; }
 }
@@ -57,42 +58,54 @@ const PROTOCOLS = "followupProtocols"; // editable from the app; defaults below 
 // Each step: day offset from treatment, stage (day1 | mid | final), and what Noa should focus on.
 const DEFAULT_PROTOCOLS = [
   { id: "botox", name: "בוטוקס", match: ["dysport", "xeomin", "botox", "בוטוקס", "דיספורט", "קסאומין"],
+    guideUrl: "https://aria-clinic-inventory.netlify.app/aftercare/ARIA-Botox-aftercare.pdf",
     guide: "הנחיות הקליניקה (למסור אם שואלת): פנים – 4 שעות ראשונות: להישאר זקופה, לא לשכב ולא להתכופף, לא לגעת/ללחוץ, להפעיל את השרירים שטופלו (גבות, מצח), בלי איפור/כובע/משקפיים לוחצים; עד הערב בלי ספורט, סאונה, אלכוהול ומים חמים; לישון על הגב בלילה הראשון. בתי שחי – 24 שעות: בלי דאודורנט עד למחרת, בלי גילוח/שעווה 48 שעות, בלי ספורט/סאונה, בגדים רפויים. שבועיים: בלי עיסוי פנים/RF/לייזר 14 יום, בלי סאונה ושיזוף שבוע. צפוי ותקין: בליטות קטנות שנעלמות תוך שעה, אדמומיות/שטף דם זעיר, כאב ראש קל ב-48 השעות הראשונות. השפעה מיום 3–5, תוצאה מלאה ביום 14 – לא לשפוט לפני. ביקורת אחרי 14 יום להשלמת יחידות. משך: פנים 3–4 חודשים, בתי שחי 6–9. לפנות מיד: צניחת עפעף/גבה, אסימטריה בולטת אחרי יום 14, קושי בבליעה/דיבור/נשימה, ראייה כפולה, חום/אדמומיות מתפשטת.",
     steps: [
+      { day: 0,  stage: "day0",  focus: "שליחת דף ההנחיות ביום הטיפול. אם עונה – לענות קצר וחם, לוודא שקיבלה את הדף." },
       { day: 1,  stage: "day1",  focus: "תחושה באזור ההזרקה, נפיחות, שטפי דם, כאב ראש, קושי בהבעה." },
       { day: 3,  stage: "mid",   focus: "הבוטוקס מתחיל לפעול. לשאול אם מרגישה שינוי, אסימטריה, גבה/עפעף שצנחו, או הבעה שנראית לא טבעית." },
       { day: 13, stage: "final", focus: "התוצאה הסופית. שביעות רצון מהמראה, אסימטריה, ולהזכיר בחום שמחר יש ביקורת בקליניקה." },
     ] },
   { id: "radiesse", name: "רדיאס", match: ["radiesse", "רדיאס"],
+    guideUrl: "https://aria-clinic-inventory.netlify.app/aftercare/ARIA-Radiesse-aftercare.pdf",
     guide: "הנחיות הקליניקה (למסור אם שואלת): 24 שעות: לא ללחוץ/לשפשף, בלי איפור על נקודות ההזרקה, קירור עדין 10 דקות כל שעה (לא קרח ישיר), לישון על הגב עם ראש מוגבה, בלי אלכוהול/ספורט/סאונה/חום, בלי אספירין ונוגדי דלקת (אקמול מותר). עיסוי: רדיאס היברידי (מיצוק) – עיסוי עדין 5 דקות, 5 פעמים ביום, 5 ימים מהערב של הטיפול; רדיאס לפיסול (לסת/סנטר/לחיים) – ללא עיסוי, לא ללחוץ ולא לשכב על האזור. אם לא בטוחה איזה סוג – לפי מה שהרופא הנחה בסיום. שבועיים: בלי ספורט מאומץ/סאונה/שמש 3 ימים, בלי טיפולי פנים/לייזר/RF/עיסוי 14 יום, בלי טיפולי שיניים 14 יום, בלי טיסה ארוכה 48 שעות, SPF 50 ושתייה מרובה. צפוי ותקין: נפיחות ואדמומיות בשיא ביום 1–2 וחולפות תוך שבוע, שטפי דם 7–14 יום, רגישות וגושיות קלה שנספגת תוך 2–4 שבועות, בפיסול הנפח הראשוני גבוה מהסופי. תוצאה אמיתית אחרי 4–12 שבועות, משך 12–18 חודשים. ביקורת אחרי 4–6 שבועות. לפנות מיד: החוורה, גוון סגול-כחלחל או דוגמת רשת בעור, כאב חזק וחריג, הפרעת ראייה או כאב בעין, חום/אדמומיות מתפשטת/הפרשה, נפיחות שמחמירה אחרי 72 שעות.",
     steps: [
+      { day: 0,  stage: "day0",  focus: "שליחת דף ההנחיות ביום הטיפול. אם עונה – לענות קצר וחם, לוודא שקיבלה את הדף." },
       { day: 1,  stage: "day1",  focus: "נפיחות, שטפי דם, כאב, גושים או קשיות מתחת לעור, אדמומיות." },
       { day: 30, stage: "final", focus: "התוצאה אחרי חודש. האם רואה שיפור במתאר/עומק, גושים שנותרו, ושביעות רצון כללית." },
     ] },
   { id: "skinbooster", name: "סקין בוסטר", match: ["profhilo", "פרופילו", "skin booster", "סקין בוסטר"],
+    guideUrl: "https://aria-clinic-inventory.netlify.app/aftercare/ARIA-Profhilo-aftercare.pdf",
     guide: "הנחיות הקליניקה (למסור אם שואלת): 24 שעות: לא לגעת/ללחוץ/לעסות את נקודות ההזרקה – החומר מתפשט לבד, בלי איפור/קרמים/סרומים, שטיפה במים פושרים בלבד בלי סבון, לישון על הגב עם ראש מוגבה, בלי אלכוהול ועישון, בלי אספירין/נוגדי דלקת ללא צורך (אקמול מותר). 3 ימים: בלי ספורט מאומץ והזעה, בלי סאונה/ג'קוזי/בריכה/ים, בלי שמש ישירה וסולריום, קומפרס קר עטוף בבד ללא לחץ, לשתות לפחות 2 ליטר מים ביום; משעה 24 – SPF 50 כל בוקר. שבועיים: בלי טיפולי פנים/פילינג/לייזר/מיקרונידלינג 14 יום, בלי רטינול/חומצות/ויטמין C 5–7 ימים, בלי טיפולי שיניים 14 יום, שגרה עדינה ולחות, בלי הזרקות נוספות באותו אזור ללא תיאום. צפוי ותקין: בליטות קטנות כמו עקיצות בנקודות ההזרקה שנספגות תוך 24–72 שעות, אדמומיות ורגישות קלה יום-יומיים, לעיתים שטף דם קטן 7–10 ימים. שיפור ראשוני בלחות וזוהר אחרי כשבוע; תוצאה מלאה 4 שבועות אחרי הטיפול השני. פרוטוקול: 2 טיפולים במרווח 4 שבועות, תחזוקה כל 6 חודשים. לפנות מיד: בליטות שלא נספגות אחרי 5 ימים או גושים קשים, נפיחות/אדמומיות שמחמירות אחרי 48 שעות, חום/כאב גובר/הפרשה, שינוי צבע לבן-אפור-כחלחל, כאב חריף או טשטוש ראייה.",
     steps: [
+      { day: 0,  stage: "day0",  focus: "שליחת דף ההנחיות ביום הטיפול. אם עונה – לענות קצר וחם, לוודא שקיבלה את הדף." },
       { day: 1,  stage: "day1",  focus: "גבשושיות קטנות בנקודות ההזרקה (צפוי), נפיחות, שטפי דם." },
       { day: 7,  stage: "mid",   focus: "הגבשושיות אמורות להיספג. לשאול אם נותרו, ואיך העור מרגיש." },
       { day: 28, stage: "final", focus: "לחות, זוהר ומרקם העור. שביעות רצון, ולהזכיר שהטיפול השני מומלץ כחודש אחרי הראשון." },
     ] },
   { id: "pn", name: "פולינוקלאוטידים", match: ["rejuran", "vitaran", "ריג'ורן", "פולינוקלאוטיד"],
+    guideUrl: "https://aria-clinic-inventory.netlify.app/aftercare/ARIA-Rejuran-aftercare.pdf",
     guide: "הנחיות הקליניקה (למסור אם שואלת): 24 שעות: לא לגעת/לשפשף/ללחוץ, בלי איפור/קרמים/סרומים, שטיפה במים פושרים בלבד בלי סבון, לישון עם ראש מוגבה על הגב, בלי אלכוהול ועישון, בלי אספירין/נוגדי דלקת ללא צורך רפואי. 3 ימים: בלי ספורט מאומץ והזעה, בלי סאונה/ג'קוזי/בריכה/ים, להימנע משמש ישירה וסולריום, קירור עדין עם קומפרס קר (לא ישיר), לשתות הרבה מים; מיום 2 – SPF 50 כל בוקר. שבועות קרובים: בלי טיפולי פנים/פילינג/לייזר/מיקרונידלינג, בלי רטינול/חומצות/ויטמין C 5–7 ימים, שגרה עדינה ולחות, בלי הזרקות נוספות באותו אזור ללא תיאום. צפוי ותקין: בליטות קטנות בנקודות ההזרקה שנעלמות תוך 24–72 שעות, אדמומיות ונפיחות קלה יום-יומיים, לעיתים שטפי דם קטנים שנעלמים תוך שבוע. תוצאות מתחילות אחרי 2–4 שבועות ומשתפרות בהדרגה; סדרה מלאה 3–4 טיפולים במרווח 3–4 שבועות. לפנות מיד: נפיחות/אדמומיות שמחמירות אחרי 48 שעות, חום, כאב גובר או הפרשה מוגלתית, שינוי צבע לבן או כחלחל בעור, כאב חריף או טשטוש ראייה.",
     steps: [
+      { day: 0,  stage: "day0",  focus: "שליחת דף ההנחיות ביום הטיפול. אם עונה – לענות קצר וחם, לוודא שקיבלה את הדף." },
       { day: 1,  stage: "day1",  focus: "אדמומיות, גבשושיות בנקודות ההזרקה, רגישות." },
       { day: 7,  stage: "mid",   focus: "הגבשושיות אמורות להיספג. אדמומיות שנותרה, גרד, איך העור מרגיש." },
       { day: 21, stage: "final", focus: "מרקם ואיכות העור. שביעות רצון, ולהזכיר שסדרת הטיפולים ממשיכה בעוד כ-3 שבועות." },
     ] },
   { id: "dermapen", name: "דרמפן + אקסוזומים", match: ["dermapen", "דרמפן", "exosome", "אקסוזום", "אקזוזום", "microneedling"],
+    guideUrl: "https://aria-clinic-inventory.netlify.app/aftercare/ARIA-Dermapen-Exosomes-aftercare.pdf",
     guide: "הנחיות הקליניקה (למסור אם שואלת): 24 שעות (המיקרו-תעלות פתוחות): לא לשטוף את הפנים ולא לגעת – לתת לאקסוזומים להיספג, בלי איפור/קרמים/מוצרים מלבד מה שניתן במרפאה, לא להסיר שאריות סרום, להימנע מהזעה/אדים חמים/מקלחת חמה על הפנים, ציפית כרית נקייה ולישון על הגב, בלי אלכוהול ועישון. ימים 2–5: שטיפה במים פושרים וסבון עדין, לייבש בטפיחות, לחות עדינה ללא בושם כמה פעמים ביום (העור יהיה יבש), SPF 50 כל בוקר ובלי שמש ישירה, בלי ספורט מאומץ/סאונה/בריכה/ים, לא לקלף או לגרד קילופים, איפור מינרלי קל אפשרי מיום 3 אם העור רגוע. שבוע-שבועיים: בלי רטינול/חומצות/ויטמין C/הלבנה 7 ימים, בלי פילינג/לייזר/שעווה/טיפולי פנים 14 יום, בלי בוטוקס/מילוי באותו אזור ללא תיאום, המשך הגנה מהשמש (רגישות לפיגמנטציה). צפוי ותקין: אדמומיות כמו אחרי שיזוף שדועכת תוך 24–48 שעות, חום/מתיחות/יובש ביומיים הראשונים, קילוף עדין בימים 3–5, לעיתים נקודות דימום זעירות או נפיחות קלה. זוהר ראשוני אחרי כשבוע, שיפור במרקם ובקמטוטים תוך 4–6 שבועות; סדרה מלאה 3–4 טיפולים במרווח 4 שבועות. לפנות מיד: אדמומיות/נפיחות שמחמירות אחרי 48 שעות, חום, כאב גובר, חום מקומי או הפרשה מוגלתית, פצעונים/שלפוחיות, פריחה או גירוד חזק.",
     steps: [
+      { day: 0,  stage: "day0",  focus: "שליחת דף ההנחיות ביום הטיפול. אם עונה – לענות קצר וחם, לוודא שקיבלה את הדף." },
       { day: 1,  stage: "day1",  focus: "אדמומיות, תחושת צריבה או חום, יובש. להזכיר: בלי איפור, בלי שמש, לחות עדינה בלבד." },
       { day: 3,  stage: "mid",   focus: "קילוף קל (צפוי), אדמומיות שנותרה, פצעונים או גירוי חריג." },
       { day: 14, stage: "final", focus: "מרקם העור, זוהר, צלקות/כתמים. שביעות רצון מהתוצאה." },
     ] },
   { id: "polidocanol", name: "פולידוקנול (נימים)", match: ["polidocanol", "פולידוקנול", "aethoxysklerol", "סקלרו"],
+    guideUrl: "https://aria-clinic-inventory.netlify.app/aftercare/ARIA-Polidocanol-aftercare.pdf",
     guide: "הנחיות הקליניקה (למסור אם שואלת): גרב לחץ – ללבוש ברציפות 24 שעות כולל בלילה, לא להוריד כלל; לאחר מכן שבועיים ביום בלבד (מורידים בלילה). 24 שעות: בלי מקלחת כלל ביממה הראשונה, ללכת 15–20 דקות מיד אחרי הטיפול ומספר פעמים ביום, לא לעמוד/לשבת ברציפות זמן ממושך, להשאיר את הפדים הקטנים עד למחרת, בלי אמבטיה/סאונה/ג'קוזי, בלי ספורט מאומץ/ריצה/קפיצות. שבועיים: הליכה יומית 30 דקות, בלי ספורט מאומץ/משקולות/אופניים, להימנע מחום על הרגליים, בלי שמש ישירה או סולריום על האזור (סיכון לכתמים), בלי טיסה ארוכה מעל 4 שעות. שבועות קרובים: SPF 50 על הרגליים 4 שבועות, בלי שעווה/לייזר/טיפולים על האזור 4 שבועות, בלי אספירין/נוגדי דלקת בשבוע הראשון (אקמול מותר), נקודה כהה קטנה (דם כלוא) – לא ללחוץ, הרופא משחרר בביקורת. צפוי ותקין: אדמומיות, נפיחות קלה ותחושת עקיצות שחולפות תוך ימים, שטפי דם 1–2 שבועות, קשיות או \"חבל\" לאורך הווריד שנספג תוך שבועות, גוון חום לאורך הווריד (פיגמנטציה) שדוהה תוך 3–12 חודשים, גרד קל ביום הראשון. הנימים נעלמים בהדרגה, תוצאה מלאה 4–8 שבועות; לעיתים נדרש טיפול נוסף במרווח 4–6 שבועות. ביקורת אחרי 4–6 שבועות. לפנות מיד: כאב חזק או נפיחות/אדמומיות שמחמירות, פצע/שלפוחית/כיב באזור ההזרקה, רגל נפוחה חמה וכואבת (במיוחד בשוק), קוצר נשימה או כאב בחזה – מיון מיד, הפרעת ראייה/כאב ראש חזק/חולשה.",
     steps: [
+      { day: 0,  stage: "day0",  focus: "שליחת דף ההנחיות ביום הטיפול. אם עונה – לענות קצר וחם, לוודא שקיבלה את הדף." },
       { day: 1,  stage: "day1",  focus: "כאב, נפיחות או קשיות לאורך הווריד, אדמומיות, גרבי לחץ אם הומלצו." },
       { day: 7,  stage: "mid",   focus: "שינוי צבע (חום/כהה לאורך הווריד – צפוי), גושים, גרד, פצע או כיב (לא תקין!)." },
       { day: 30, stage: "final", focus: "האם הנימים נעלמו או דהו, כתמים שנותרו, שביעות רצון. להזכיר שלעתים צריך טיפול נוסף." },
@@ -103,7 +116,7 @@ const DEFAULT_PROTOCOLS = [
     ] },
 ];
 
-const STAGE_LABEL = { day1: "יום אחרי", mid: "מעקב ביניים", final: "סיכום" };
+const STAGE_LABEL = { day0: "דף הנחיות", day1: "יום אחרי", mid: "מעקב ביניים", final: "סיכום" };
 
 // ---- Persona / system prompt (Hebrew) ----
 const SYSTEM_PROMPT = `את "נועה", העוזרת הדיגיטלית של קליניקת ARIA, קליניקה לאסתטיקה רפואית. את לא מסתירה שאת עוזרת דיגיטלית – זו זהותך, ואת מציגה אותה בטבעיות.
@@ -164,6 +177,7 @@ async function askClaude(apiKey, conv) {
   const stageLine = conv.stage
     ? `\nשלב המעקב: ${STAGE_LABEL[conv.stage] || conv.stage}${conv.dayOffset ? ` (יום ${conv.dayOffset} אחרי הטיפול)` : ""}.` +
       (conv.focus ? `\nמה חשוב לבדוק בשלב הזה: ${conv.focus}` : "") +
+      (conv.guideUrl ? `\nקישור לדף ההנחיות המלא (אפשר לשלוח ללקוחה אם מבקשת): ${conv.guideUrl}` : "") +
       (conv.guide ? `\n\n${conv.guide}\nאלה ההנחיות הרשמיות של הקליניקה לטיפול הזה – אפשר למסור מהן בביטחון, בניסוח חם וקצר, רק את מה שרלוונטי לשאלה. אל תמציאי הנחיות שלא מופיעות כאן.` : "") +
       (conv.stage !== "day1"
         ? `\nזו לא השיחה הראשונה עם הלקוחה – היא כבר מכירה אותך. אל תציגי את עצמך מחדש באריכות; התייחסי לזמן שעבר מאז הטיפול.`
@@ -225,6 +239,18 @@ async function sendWhatsAppTemplate(sid, token, to, variables, stage = "day1") {
     to,
     contentSid: templateFor(stage),
     contentVariables: JSON.stringify(variables),
+  });
+}
+
+// Aftercare PDF: business-initiated → media template (variables: 1=name, 2=treatment; media URL is baked in the template per protocol? No – Twilio media templates take the URL as a variable)
+async function sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, pdfUrl }) {
+  const client = twilio(sid, token);
+  const tpl = templateFor("day0");
+  if (!tpl) throw new Error("No approved day0 media template configured (WA_TEMPLATES.day0)");
+  return client.messages.create({
+    from: WHATSAPP_FROM, to, contentSid: tpl,
+    // Template media URL is "https://aria-clinic-inventory.netlify.app/aftercare/{{3}}" – pass only the file name
+    contentVariables: JSON.stringify({ 1: firstName, 2: treatmentLabel, 3: String(pdfUrl).split("/").pop() }),
   });
 }
 
@@ -401,6 +427,7 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
 
   // Local copy of what the approved template says, for the conversation log
   const openings = {
+    day0: `היי ${firstName} 💛 זאת נועה, העוזרת הדיגיטלית של קליניקת ARIA. תודה שהיית אצלנו היום! מצורף דף ההנחיות לאחר ${treatmentLabel} – כדאי לשמור אותו. מחר אכתוב לך לשמוע איך את מרגישה 🌿`,
     day1: `היי ${firstName} 💛 זאת נועה, העוזרת הדיגיטלית של קליניקת ARIA.\n` +
           `רציתי לבדוק איך את מרגישה אחרי ${treatmentLabel}? הכל בסדר באזור הטיפול?`,
     mid:  `היי ${firstName} 💛 זאת נועה מקליניקת ARIA. עברו כמה ימים מאז ${treatmentLabel} – איך את מרגישה? יש משהו שמטריד אותך?`,
@@ -442,6 +469,7 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
       dayOffset,
       focus: protocolStep,
       guide: protocolGuide,
+      guideUrl: data.protocolGuideUrl || prev?.guideUrl || "",
       status: "open",
       handled: false,
       lastRisk: "ok",
@@ -453,7 +481,13 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
   );
 
   try {
-    await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel }, stage);
+    if (stage === "day0") {
+      const pdfUrl = data.protocolGuideUrl || "";
+      if (!pdfUrl) { await ref.update({ status: "skipped", error: "no guideUrl" }); return; }
+      await sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, pdfUrl });
+    } else {
+      await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel }, stage);
+    }
     await ref.update({ sentAt: admin.firestore.FieldValue.serverTimestamp(), status: "sent" });
   } catch (e) {
     logger.error("Opening message failed", e);
@@ -517,7 +551,14 @@ async function loadProtocols() {
   let dirty = false;
   for (const p of list) {
     const def = DEFAULT_PROTOCOLS.find((d) => d.id === p.id);
-    if (def?.guide && !p.guide) { batch.update(db.collection(PROTOCOLS).doc(p.id), { guide: def.guide }); p.guide = def.guide; dirty = true; }
+    const upd = {};
+    if (def?.guide && !p.guide) { upd.guide = def.guide; p.guide = def.guide; }
+    if (def?.guideUrl && !p.guideUrl) { upd.guideUrl = def.guideUrl; p.guideUrl = def.guideUrl; }
+    if (def && !(p.steps || []).some((st) => st.stage === "day0")) {
+      const day0 = (def.steps || []).find((st) => st.stage === "day0");
+      if (day0) { upd.steps = [day0, ...(p.steps || [])]; p.steps = upd.steps; }
+    }
+    if (Object.keys(upd).length) { batch.update(db.collection(PROTOCOLS).doc(p.id), upd); dirty = true; }
   }
   if (dirty) await batch.commit();
   return list.filter((p) => p.enabled !== false);
@@ -589,8 +630,11 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
         dayOffset: step.day,
         protocolStepFocus: step.focus || "",
         protocolGuide: protocol.guide || "",
+        protocolGuideUrl: protocol.guideUrl || "",
         status: "scheduled",
-        scheduledFor: admin.firestore.Timestamp.fromDate(dayOffsetAt(step.day, FOLLOWUP_HOUR)),
+        scheduledFor: step.day === 0
+          ? admin.firestore.Timestamp.fromDate(new Date(Date.now() + 2 * 60 * 1000))
+          : admin.firestore.Timestamp.fromDate(dayOffsetAt(step.day, FOLLOWUP_HOUR)),
         source: "auto",
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
