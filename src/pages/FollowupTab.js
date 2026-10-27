@@ -275,6 +275,8 @@ export default function FollowupTab() {
                 {f.scheduledFor && <span style={{ color: "var(--text-secondary)" }}>{fmtDate(f.scheduledFor)}</span>}
                 <span className={`badge ${FOLLOWUP_STATUS[f.status]?.badge || "badge-info"}`}>{FOLLOWUP_STATUS[f.status]?.label || f.status}</span>
                 <button className="btn btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }} onClick={() => sendPendingNow(f)}>שלח עכשיו</button>
+                <button className="btn btn-danger" style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+                  onClick={async () => { if (window.confirm(`לבטל את המעקב של ${f.name}?`)) { await updateDoc(doc(db, "whatsappFollowups", f.id), { status: "cancelled", cancelledAt: serverTimestamp() }); toast.success("המעקב בוטל"); } }}>בטל</button>
               </span>
             </div>
           ))}
