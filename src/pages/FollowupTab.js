@@ -61,7 +61,7 @@ export default function FollowupTab() {
     const match = (typeof editProto.match === "string" ? editProto.match.split(",") : editProto.match || [])
       .map(m => m.trim()).filter(Boolean);
     try {
-      await updateDoc(doc(db, "followupProtocols", editProto.id), { name: editProto.name, match, steps: normalized, enabled: editProto.enabled !== false });
+      await updateDoc(doc(db, "followupProtocols", editProto.id), { name: editProto.name, match, steps: normalized, guide: editProto.guide || "", enabled: editProto.enabled !== false });
       toast.success("הפרוטוקול נשמר");
       setEditProto(null);
     } catch (e) { toast.error("שגיאה: " + e.message); }
@@ -228,6 +228,9 @@ export default function FollowupTab() {
                         onChange={e => setEditProto({ ...editProto, match: e.target.value })}
                         placeholder="מילות מפתח לזיהוי המוצר, מופרדות בפסיק" />
                     )}
+                    <textarea value={editProto.guide || ""} rows={5} style={{ fontSize: "0.8rem" }}
+                      onChange={e => setEditProto({ ...editProto, guide: e.target.value })}
+                      placeholder="הנחיות הקליניקה לטיפול הזה (מה שנועה רשאית למסור ללקוחה): שעות ראשונות, מה אסור, מה צפוי, מתי לפנות" />
                     {(editProto.steps || []).map((st, i) => (
                       <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <span style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>יום</span>
