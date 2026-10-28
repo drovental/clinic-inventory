@@ -49,19 +49,40 @@ export default function FollowupTab() {
     return unsub;
   }, []);
 
+  async function addProtocol() {
+    try {
+      const ref = await addDoc(collection(db, "followupProtocols"), {
+        name: "פרוטוקול חדש", match: [], guide: "", guideUrl: "", enabled: true,
+        steps: [{ day: 0, focus: "", stage: "day0" }, { day: 1, focus: "", stage: "day1" }],
+        createdAt: serverTimestamp(),
+      });
+      setShowProtocols(true);
+      setEditProto({ id: ref.id, name: "", match: "", guide: "", guideUrl: "", enabled: true,
+        steps: [{ day: 0, focus: "" }, { day: 1, focus: "" }] });
+    } catch (e) { toast.error("שגיאה: " + e.message); }
+  }
+
+  async function deleteProtocol(p) {
+    if (!window.confirm(`למחוק את הפרוטוקול "${p.name}"?`)) return;
+    await deleteDoc(doc(db, "followupProtocols", p.id));
+    toast.success("הפרוטוקול נמחק");
+  }
+
   async function saveProtocol() {
     if (!editProto) return;
+    const match = (typeof editProto.match === "string" ? editProto.match.split(",") : editProto.match || [])
+      .map(m => m.trim()).filter(Boolean);
     const all = (editProto.steps || []).filter(st => st.day !== "" && Number(st.day) >= 0).sort((a, b) => a.day - b.day);
     const day0 = all.filter(st => Number(st.day) === 0).slice(0, 1).map(st => ({ day: 0, focus: st.focus || "", stage: "day0" }));
     const steps = all.filter(st => Number(st.day) > 0);
+    if (!editProto.name?.trim()) { toast.error("צריך שם לפרוטוקול"); return; }
     if (steps.length === 0) { toast.error("צריך לפחות שלב אחד אחרי יום הטיפול"); return; }
+    if (editProto.id !== "default" && match.length === 0) { toast.error("צריך לפחות מילת מפתח אחת לזיהוי המוצר"); return; }
     // stage is derived from position: day 0 = aftercare PDF, first = day1, last = final, others = mid
     const normalized = [...day0, ...steps.map((st, i) => ({
       day: Number(st.day), focus: st.focus || "",
       stage: i === 0 ? "day1" : i === steps.length - 1 ? "final" : "mid",
     }))];
-    const match = (typeof editProto.match === "string" ? editProto.match.split(",") : editProto.match || [])
-      .map(m => m.trim()).filter(Boolean);
     try {
       await updateDoc(doc(db, "followupProtocols", editProto.id), { name: editProto.name, match, steps: normalized, guide: editProto.guide || "", guideUrl: editProto.guideUrl || "", enabled: editProto.enabled !== false });
       toast.success("הפרוטוקול נשמר");
@@ -278,12 +299,18 @@ export default function FollowupTab() {
                         {p.match?.length ? ` · ${p.match.slice(0, 3).join(", ")}${p.match.length > 3 ? "…" : ""}` : ""}
                       </div>
                     </div>
-                    <button className="btn btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }}
-                      onClick={() => setEditProto({ ...p, steps: (p.steps || []).map(st => ({ ...st })) })}>ערוך</button>
+                    <span style={{ display: "flex", gap: 6 }}>
+                      <button className="btn btn-secondary" style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+                        onClick={() => setEditProto({ ...p, steps: (p.steps || []).map(st => ({ ...st })) })}>ערוך</button>
+                      {p.id !== "default" && (
+                        <button className="btn btn-danger" style={{ fontSize: "0.7rem", padding: "3px 8px" }} onClick={() => deleteProtocol(p)}>מחק</button>
+                      )}
+                    </span>
                   </div>
                 )}
               </div>
             ))}
+            <button className="btn btn-secondary btn-full" style={{ marginTop: 10, fontSize: "0.85rem" }} onClick={addProtocol}>＋ פרוטוקול חדש</button>
           </div>
         )}
       </div>
