@@ -196,24 +196,38 @@ async function askClaude(apiKey, conv) {
     messages.unshift({ role: "user", content: "[תחילת שיחת מעקב]" });
   }
 
-  const res = await client.messages.create({
+  const system = `${SYSTEM_PROMPT}\n\n${context}`;
+  const extract = (res) => {
+    const toolUse = res.content.find((c) => c.type === "tool_use");
+    const text = res.content.filter((c) => c.type === "text").map((c) => c.text).join("").trim();
+    const raw = toolUse ? toolUse.input || {} : {};
+    return { raw, reply: (typeof raw.reply === "string" && raw.reply.trim()) || text };
+  };
+
+  let res = await client.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 600,
-    system: `${SYSTEM_PROMPT}\n\n${context}`,
+    max_tokens: 1500,
+    system,
     tools: [RESPOND_TOOL],
     tool_choice: { type: "auto" },
     messages,
   });
+  let { raw, reply } = extract(res);
 
-  const toolUse = res.content.find((c) => c.type === "tool_use");
-  const text = res.content
-    .filter((c) => c.type === "text")
-    .map((c) => c.text)
-    .join("")
-    .trim();
-
-  const raw = toolUse ? toolUse.input || {} : {};
-  const reply = (typeof raw.reply === "string" && raw.reply.trim()) || text;
+  if (!reply) {
+    // Retry once in plain text so the client never gets the technical-fallback message
+    logger.warn("Claude empty response – retrying without tools", {
+      stop_reason: res.stop_reason, content: JSON.stringify(res.content).slice(0, 800),
+    });
+    res = await client.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 800,
+      system: `${system}\n\nעני עכשיו בטקסט רגיל בלבד: ההודעה ללקוחה, בלי שום דבר נוסף.`,
+      messages,
+    });
+    ({ raw, reply } = extract(res));
+    if (reply) raw = { ...raw, risk: raw.risk || "attention", summary: raw.summary || "נועה ענתה ללא סיווג – מומלץ לבדוק את השיחה." };
+  }
   if (!reply) throw new Error("Claude returned an empty response");
 
   // Normalize so every field is always a valid Firestore value
