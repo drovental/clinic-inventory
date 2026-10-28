@@ -1,7 +1,7 @@
 // src/pages/FollowupTab.js
 import React, { useState, useEffect } from "react";
 import toast from "react-hot-toast";
-import { collection, onSnapshot, query, orderBy, doc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, doc, updateDoc, addDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { usePatients, useTherapists } from "../hooks/useFirestore";
 
@@ -95,13 +95,30 @@ export default function FollowupTab() {
     return unsub;
   }, []);
 
-  const needsAttention = conversations.filter(c => c.lastRisk !== "ok" && !c.handled);
+  const active = conversations.filter(c => !c.archived);
+  const needsAttention = active.filter(c => c.lastRisk !== "ok" && !c.handled);
+  const archivedCount = conversations.length - active.length;
   const filtered = conversations.filter(c => {
+    if (filter === "archive") return !!c.archived;
+    if (c.archived) return false;
     if (filter === "needsAttention") return c.lastRisk !== "ok" && !c.handled;
     if (filter === "open") return c.status === "open";
     return true;
   });
   const pending = followups.filter(f => f.status === "scheduled" || f.status === "failed");
+
+  async function archiveConv(c, archived) {
+    await updateDoc(doc(db, "whatsappConversations", c.id), { archived, archivedAt: archived ? serverTimestamp() : null, ...(archived ? { handled: true } : {}) });
+    toast.success(archived ? "הועבר לארכיון" : "שוחזר מהארכיון");
+    setExpanded(null);
+  }
+
+  async function deleteConv(c) {
+    if (!window.confirm(`למחוק לצמיתות את השיחה עם ${c.name || c.phone}? לא ניתן לשחזר.`)) return;
+    await deleteDoc(doc(db, "whatsappConversations", c.id));
+    toast.success("השיחה נמחקה");
+    setExpanded(null);
+  }
 
   async function markHandled(c, handled) {
     await updateDoc(doc(db, "whatsappConversations", c.id), { handled, handledAt: handled ? serverTimestamp() : null });
@@ -290,7 +307,7 @@ export default function FollowupTab() {
       )}
 
       <div style={{ display: "flex", gap: 6, marginBottom: "0.75rem" }}>
-        {[["needsAttention", `לטיפול (${needsAttention.length})`], ["open", "פתוחות"], ["all", "הכל"]].map(([id, label]) => (
+        {[["needsAttention", `לטיפול (${needsAttention.length})`], ["open", "פתוחות"], ["all", "הכל"], ["archive", `ארכיון (${archivedCount})`]].map(([id, label]) => (
           <button key={id} onClick={() => setFilter(id)} className={`btn ${filter === id ? "btn-primary" : "btn-secondary"}`} style={{ flex: 1, fontSize: "0.8rem", padding: "8px 4px" }}>
             {label}
           </button>
@@ -300,7 +317,7 @@ export default function FollowupTab() {
       {filtered.length === 0 ? (
         <div className="empty-state">
           <span style={{ fontSize: 40, opacity: 0.3 }}>💬</span>
-          <p>{filter === "needsAttention" ? "אין שיחות שדורשות טיפול 🎉" : "אין שיחות עדיין"}</p>
+          <p>{filter === "needsAttention" ? "אין שיחות שדורשות טיפול 🎉" : filter === "archive" ? "הארכיון ריק" : "אין שיחות עדיין"}</p>
         </div>
       ) : filtered.map(c => {
         const risk = RISK[c.lastRisk] || RISK.ok;
@@ -348,11 +365,17 @@ export default function FollowupTab() {
                   <a className="btn btn-secondary" style={{ flex: 1, textAlign: "center", textDecoration: "none" }} href={`tel:+${c.phone}`}>
                     📞 התקשר
                   </a>
-                  {c.lastRisk !== "ok" && (
+                  {c.lastRisk !== "ok" && !c.archived && (
                     <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => markHandled(c, !c.handled)}>
                       {c.handled ? "↩ החזר" : "✓ טופל"}
                     </button>
                   )}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-secondary" style={{ flex: 1, fontSize: "0.8rem" }} onClick={() => archiveConv(c, !c.archived)}>
+                    {c.archived ? "↩ שחזר מהארכיון" : "📁 העבר לארכיון"}
+                  </button>
+                  <button className="btn btn-danger" style={{ fontSize: "0.8rem" }} onClick={() => deleteConv(c)}>🗑 מחק</button>
                 </div>
               </div>
             )}

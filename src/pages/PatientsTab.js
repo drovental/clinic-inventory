@@ -2,6 +2,16 @@
 import React, { useState } from "react";
 import toast from "react-hot-toast";
 import { usePatients, useTreatments } from "../hooks/useFirestore";
+import { collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
+import { db } from "../firebase";
+
+// Delete the patient's WhatsApp conversations and scheduled follow-ups as well
+async function deletePatientFollowups(patientId) {
+  for (const col of ["whatsappConversations", "whatsappFollowups"]) {
+    const snap = await getDocs(query(collection(db, col), where("patientId", "==", patientId)));
+    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+  }
+}
 
 const EMPTY = { name: "", phone: "", dob: "", notes: "", allergies: "" };
 
@@ -133,7 +143,8 @@ export default function PatientsTab() {
                   className="btn btn-danger"
                   style={{ marginTop: 10, fontSize: "0.8rem", padding: "6px 12px" }}
                   onClick={async () => {
-                    if (window.confirm(`למחוק את ${p.name}?`)) {
+                    if (window.confirm(`למחוק את ${p.name}? (כולל שיחות ווטסאפ ומעקבים)`)) {
+                      await deletePatientFollowups(p.id);
                       await deletePatient(p.id);
                       toast.success("נמחק");
                     }
