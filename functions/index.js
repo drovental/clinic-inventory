@@ -377,6 +377,21 @@ exports.whatsappWebhook = onRequest(
     conv.messages = conv.messages || [];
     conv.messages.push({ role: "client", text, at: new Date().toISOString() });
 
+    // Safety net: if the conversation has no therapist, take it from the patient's latest treatment
+    if (!conv.therapistPhone && conv.patientId) {
+      try {
+        const tSnap = await db.collection(TREATMENTS).where("patientId", "==", conv.patientId).get();
+        const last = tSnap.docs.map((d) => d.data())
+          .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))[0];
+        const therapist = await getTherapist(last?.therapistId);
+        if (therapist?.phone) {
+          conv.therapistId = therapist.id;
+          conv.therapistName = therapist.name;
+          conv.therapistPhone = therapist.phone;
+        }
+      } catch (e) { logger.warn("Therapist fallback lookup failed", e.message); }
+    }
+
     let result;
     try {
       result = await askClaude(ANTHROPIC_API_KEY.value(), conv);

@@ -149,9 +149,9 @@ export default function FollowupTab() {
   // Re-send a scheduled/failed follow-up immediately (bypasses the hourly job)
   async function sendPendingNow(f) {
     try {
+      const { id, status, scheduledFor, createdAt, sentAt, error, ...rest } = f;
       await addDoc(collection(db, "whatsappFollowups"), {
-        phone: f.phone, name: f.name || "", patientId: f.patientId || "",
-        treatment: f.treatment || "", treatmentDate: f.treatmentDate || "",
+        ...rest, // keeps therapist, stage, protocol and guide fields
         status: "pending", source: "manual-resend", createdAt: serverTimestamp(),
       });
       await updateDoc(doc(db, "whatsappFollowups", f.id), { status: "resent", resentAt: serverTimestamp() });
