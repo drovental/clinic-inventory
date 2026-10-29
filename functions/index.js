@@ -38,13 +38,18 @@ function templateFor(stage) {
   try {
     const map = JSON.parse(WA_TEMPLATES.value() || "{}");
     if (stage === "alert") return map.alert || null; // no fallback for staff alerts
+    if (stage === "reminder") return map.reminder || null; // no fallback for reminders
     if (stage === "day0") return null; // resolved per protocol in aftercareTemplateFor()
     return map[stage] || map.day1 || LEGACY_OPENING_TEMPLATE_SID;
-  } catch { return stage === "alert" ? null : LEGACY_OPENING_TEMPLATE_SID; }
+  } catch { return stage === "alert" || stage === "reminder" ? null : LEGACY_OPENING_TEMPLATE_SID; }
 }
 const WEBHOOK_URL = "https://europe-west1-aria-inventory.cloudfunctions.net/whatsappWebhook";
 const CLAUDE_MODEL = "claude-sonnet-5-5";
 const CONVERSATIONS = "whatsappConversations";
+// No-reply handling: one reminder after REMINDER_AFTER_HOURS without an answer,
+// then the conversation is flagged "noReply" after NOREPLY_AFTER_HOURS more.
+const REMINDER_AFTER_HOURS = 8;   // 11:00 → ~19:00
+const NOREPLY_AFTER_HOURS = 15;   // next morning
 const FOLLOWUPS = "whatsappFollowups";
 const TREATMENTS = "treatments"; // written by the inventory app
 const PATIENTS = "patients";     // written by the inventory app
@@ -374,6 +379,9 @@ exports.whatsappWebhook = onRequest(
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         };
     if (!conv.name && name) conv.name = name;
+    conv.awaitingReply = false;
+    conv.noReply = false;
+    conv.lastClientAt = admin.firestore.FieldValue.serverTimestamp();
     conv.messages = conv.messages || [];
     conv.messages.push({ role: "client", text, at: new Date().toISOString() });
 
@@ -527,6 +535,10 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
       await sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, protocolId });
     } else {
       await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel }, stage);
+      await convRef.set({
+        awaitingReply: true, reminderSent: false, noReply: false,
+        openingSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
     }
     await ref.update({ sentAt: admin.firestore.FieldValue.serverTimestamp(), status: "sent" });
   } catch (e) {
@@ -706,5 +718,41 @@ exports.sendScheduledFollowups = onSchedule(
       });
     }
     logger.info(`Scheduled follow-ups processed: ${due.size}`);
+    await processNoReplies(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
   }
 );
+
+// Clients who never answered the follow-up: one reminder, then flag for the staff
+async function processNoReplies(sid, token) {
+  const nowMs = Date.now();
+  const snap = await db.collection(CONVERSATIONS).where("awaitingReply", "==", true).limit(200).get();
+  let reminders = 0, flagged = 0;
+  for (const d of snap.docs) {
+    const c = d.data();
+    if (c.status === "closed" || c.archived) continue;
+    const sentMs = c.openingSentAt?.toMillis?.() || 0;
+    if (!sentMs) continue;
+    const hours = (nowMs - sentMs) / 36e5;
+    try {
+      if (!c.reminderSent && hours >= REMINDER_AFTER_HOURS) {
+        if (!templateFor("reminder")) continue; // template not configured yet
+        const firstName = (c.name || "").split(" ")[0] || "";
+        const reminderText = `היי ${firstName} 💛 זאת נועה מקליניקת ARIA. שלחתי לך קודם הודעה בנוגע ל${c.treatment || "הטיפול"} ועוד לא ראיתי תשובה – רק רוצה לוודא שהכל בסדר. אפשר לענות לי כאן בכל שעה 🙂`;
+        await sendWhatsAppTemplate(sid, token, c.whatsapp || "whatsapp:+" + c.phone, { 1: firstName, 2: c.treatment || "הטיפול" }, "reminder");
+        await d.ref.update({
+          reminderSent: true, reminderAt: admin.firestore.FieldValue.serverTimestamp(),
+          messages: admin.firestore.FieldValue.arrayUnion({ role: "assistant", text: reminderText, at: new Date().toISOString(), stage: c.stage || "" }),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        reminders++;
+      } else if (c.reminderSent) {
+        const remMs = c.reminderAt?.toMillis?.() || sentMs;
+        if ((nowMs - remMs) / 36e5 >= NOREPLY_AFTER_HOURS) {
+          await d.ref.update({ awaitingReply: false, noReply: true, noReplyAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+          flagged++;
+        }
+      }
+    } catch (e) { logger.error("No-reply processing failed", { phone: c.phone, err: e.message }); }
+  }
+  if (reminders || flagged) logger.info(`No-reply pass: ${reminders} reminders, ${flagged} flagged`);
+}

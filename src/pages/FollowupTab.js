@@ -117,12 +117,12 @@ export default function FollowupTab() {
   }, []);
 
   const active = conversations.filter(c => !c.archived);
-  const needsAttention = active.filter(c => c.lastRisk !== "ok" && !c.handled);
+  const needsAttention = active.filter(c => (c.lastRisk !== "ok" || c.noReply) && !c.handled);
   const archivedCount = conversations.length - active.length;
   const filtered = conversations.filter(c => {
     if (filter === "archive") return !!c.archived;
     if (c.archived) return false;
-    if (filter === "needsAttention") return c.lastRisk !== "ok" && !c.handled;
+    if (filter === "needsAttention") return (c.lastRisk !== "ok" || c.noReply) && !c.handled;
     if (filter === "open") return c.status === "open";
     return true;
   });
@@ -361,6 +361,8 @@ export default function FollowupTab() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                 <span className={`badge ${risk.badge}`}>{risk.label}</span>
+                {c.noReply && !c.handled && <span className="badge badge-warn" style={{ fontSize: "0.65rem" }}>ללא מענה</span>}
+                {c.awaitingReply && !c.noReply && <span className="badge badge-info" style={{ fontSize: "0.65rem" }}>{c.reminderSent ? "נשלחה תזכורת" : "ממתינה לתשובה"}</span>}
                 {c.handled && <span className="badge badge-ok" style={{ fontSize: "0.65rem" }}>טופל</span>}
                 {c.status === "closed" && <span style={{ fontSize: "0.7rem", color: "var(--text-tertiary)" }}>הסתיימה</span>}
               </div>
@@ -392,7 +394,7 @@ export default function FollowupTab() {
                   <a className="btn btn-secondary" style={{ flex: 1, textAlign: "center", textDecoration: "none" }} href={`tel:+${c.phone}`}>
                     📞 התקשר
                   </a>
-                  {c.lastRisk !== "ok" && !c.archived && (
+                  {(c.lastRisk !== "ok" || c.noReply) && !c.archived && (
                     <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => markHandled(c, !c.handled)}>
                       {c.handled ? "↩ החזר" : "✓ טופל"}
                     </button>
