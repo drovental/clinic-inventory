@@ -84,7 +84,7 @@ export default function FollowupTab() {
       stage: i === 0 ? "day1" : i === steps.length - 1 ? "final" : "mid",
     }))];
     try {
-      await updateDoc(doc(db, "followupProtocols", editProto.id), { name: editProto.name, match, steps: normalized, guide: editProto.guide || "", guideUrl: editProto.guideUrl || "", enabled: editProto.enabled !== false });
+      await updateDoc(doc(db, "followupProtocols", editProto.id), { name: editProto.name, match, steps: normalized, guide: editProto.guide || "", guideUrl: editProto.guideUrl || "", aftercareTemplateSid: editProto.aftercareTemplateSid || "", enabled: editProto.enabled !== false });
       toast.success("הפרוטוקול נשמר");
       setEditProto(null);
     } catch (e) { toast.error("שגיאה: " + e.message); }
@@ -269,6 +269,7 @@ export default function FollowupTab() {
                         placeholder="מילות מפתח לזיהוי המוצר, מופרדות בפסיק" />
                     )}
                     <input value={editProto.guideUrl || ""} onChange={e => setEditProto({ ...editProto, guideUrl: e.target.value })} placeholder="קישור לדף ההנחיות (PDF) – נשלח ביום הטיפול" style={{ fontSize: "0.8rem", direction: "ltr" }} />
+                    <input value={editProto.aftercareTemplateSid || ""} onChange={e => setEditProto({ ...editProto, aftercareTemplateSid: e.target.value.trim() })} placeholder="SID של תבנית ה-PDF ב-Twilio (HX...) – לשליחה ביום הטיפול" style={{ fontSize: "0.8rem", direction: "ltr" }} />
                     <textarea value={editProto.guide || ""} rows={5} style={{ fontSize: "0.8rem" }}
                       onChange={e => setEditProto({ ...editProto, guide: e.target.value })}
                       placeholder="הנחיות הקליניקה לטיפול הזה (מה שנועה רשאית למסור ללקוחה): שעות ראשונות, מה אסור, מה צפוי, מתי לפנות" />

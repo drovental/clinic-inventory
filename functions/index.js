@@ -263,7 +263,10 @@ async function sendWhatsAppTemplate(sid, token, to, variables, stage = "day1") {
 
 // Aftercare PDF: business-initiated → media template (variables: 1=name, 2=treatment; media URL is baked in the template per protocol? No – Twilio media templates take the URL as a variable)
 // WA_TEMPLATES.day0 is a map { protocolId: "HX..." } – one media template per treatment (fixed PDF URL each)
-function aftercareTemplateFor(protocolId) {
+// A protocol edited in the app may carry its own template SID (aftercareTemplateSid) – it wins.
+function aftercareTemplateFor(protocolId, protocol) {
+  const own = String(protocol?.aftercareTemplateSid || "").trim();
+  if (/^HX[0-9a-f]{32}$/i.test(own)) return own;
   try {
     const map = JSON.parse(WA_TEMPLATES.value() || "{}");
     const d0 = map.day0;
@@ -272,9 +275,9 @@ function aftercareTemplateFor(protocolId) {
     return d0[protocolId] || null;
   } catch { return null; }
 }
-async function sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, protocolId }) {
+async function sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, protocolId, protocol }) {
   const client = twilio(sid, token);
-  const tpl = aftercareTemplateFor(protocolId);
+  const tpl = aftercareTemplateFor(protocolId, protocol);
   if (!tpl) throw new Error(`No approved aftercare template for protocol "${protocolId}" (WA_TEMPLATES.day0)`);
   return client.messages.create({
     from: WHATSAPP_FROM, to, contentSid: tpl,
@@ -531,8 +534,10 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
 
   try {
     if (stage === "day0") {
-      if (!aftercareTemplateFor(protocolId)) { await ref.update({ status: "skipped", error: "no aftercare template for " + protocolId }); return; }
-      await sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, protocolId });
+      let protocol = null;
+      try { protocol = (await loadProtocols()).find((p) => p.id === protocolId) || null; } catch {}
+      if (!aftercareTemplateFor(protocolId, protocol)) { await ref.update({ status: "skipped", error: "no aftercare template for " + protocolId }); return; }
+      await sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, protocolId, protocol });
     } else {
       await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel }, stage);
       await convRef.set({
