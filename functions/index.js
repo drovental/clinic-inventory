@@ -820,3 +820,92 @@ async function processNoReplies(sid, token) {
   }
   if (reminders || flagged) logger.info(`No-reply pass: ${reminders} reminders, ${flagged} flagged`);
 }
+
+
+// ============================================================
+// Loyalty club: renewal reminders + birthday gifts (called from the app)
+// WA_TEMPLATES may override: {"loyaltyRenewal":"HX..","loyaltyBirthday":"HX.."}
+// ============================================================
+const { onCall: onCallLoyalty, HttpsError: HttpsErrorLoyalty } = require("firebase-functions/v2/https");
+const LOYALTY_TX = "loyaltyTransactions";
+const LOYALTY_RENEWAL_TEMPLATE_SID = "HX4bb4d9c7ee046c257dd4a0977909de94";
+const LOYALTY_BIRTHDAY_TEMPLATE_SID = "HXe71641048209f78ee5bace0b2e5cb8a2";
+const BIRTHDAY_GIFT_POINTS = 200;
+
+function loyaltyTemplateFor(kind) {
+  try {
+    const map = JSON.parse(WA_TEMPLATES.value() || "{}");
+    if (kind === "birthday") return map.loyaltyBirthday || LOYALTY_BIRTHDAY_TEMPLATE_SID;
+    return map.loyaltyRenewal || LOYALTY_RENEWAL_TEMPLATE_SID;
+  } catch {
+    return kind === "birthday" ? LOYALTY_BIRTHDAY_TEMPLATE_SID : LOYALTY_RENEWAL_TEMPLATE_SID;
+  }
+}
+
+exports.sendLoyaltyMessage = onCallLoyalty(
+  { region: "europe-west1", secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WA_TEMPLATES] },
+  async (request) => {
+    if (!request.auth) throw new HttpsErrorLoyalty("unauthenticated", "login required");
+    const { patientId, kind, treatment } = request.data || {};
+    if (!patientId || !["renewal", "birthday"].includes(kind)) {
+      throw new HttpsErrorLoyalty("invalid-argument", "patientId and kind are required");
+    }
+
+    const pSnap = await db.collection(PATIENTS).doc(patientId).get();
+    if (!pSnap.exists) throw new HttpsErrorLoyalty("not-found", "patient not found");
+    const patient = pSnap.data();
+    const phone = normalizePhone(patient.phone || "");
+    if (!phone) throw new HttpsErrorLoyalty("failed-precondition", "no-phone");
+
+    // Respect opt-out recorded by the follow-up bot
+    const conv = await db.collection(CONVERSATIONS).doc(phoneKey(phone)).get();
+    if (conv.exists && conv.data().optOut) {
+      throw new HttpsErrorLoyalty("failed-precondition", "opted-out");
+    }
+    if (isShabbat()) throw new HttpsErrorLoyalty("failed-precondition", "shabbat");
+
+    const firstName = String(patient.name || "").trim().split(/\s+/)[0] || "";
+    const to = "whatsapp:" + phone;
+    const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+
+    let variables;
+    if (kind === "birthday") {
+      // Gift points first, then message
+      await db.collection(PATIENTS).doc(patientId).update({
+        loyaltyPoints: admin.firestore.FieldValue.increment(BIRTHDAY_GIFT_POINTS),
+        loyaltyTotalEarned: admin.firestore.FieldValue.increment(BIRTHDAY_GIFT_POINTS),
+        lastBirthdayGiftYear: new Date().getFullYear(),
+      });
+      await db.collection(LOYALTY_TX).add({
+        patientId, patientName: patient.name || "", type: "earn",
+        points: BIRTHDAY_GIFT_POINTS, shekels: 0, note: "מתנת יום הולדת 🎂",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      variables = { 1: firstName, 2: String(BIRTHDAY_GIFT_POINTS) };
+    } else {
+      const points = Number(patient.loyaltyPoints || 0).toLocaleString("he-IL");
+      variables = { 1: firstName, 2: treatment || "אסתטי", 3: points };
+    }
+
+    const res = await client.messages.create({
+      from: WHATSAPP_FROM, to,
+      contentSid: loyaltyTemplateFor(kind),
+      contentVariables: JSON.stringify(variables),
+    });
+
+    // Log the send so the app can show "sent" and avoid duplicates
+    await db.collection(LOYALTY_TX).add({
+      patientId, patientName: patient.name || "", type: "message", kind,
+      treatment: treatment || null, points: 0, shekels: 0,
+      note: kind === "birthday" ? "נשלחה ברכת יום הולדת" : `נשלחה תזכורת חידוש: ${treatment || ""}`,
+      messageSid: res.sid, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    if (kind === "renewal") {
+      await db.collection(PATIENTS).doc(patientId).update({
+        lastRenewalReminderAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    logger.info("Loyalty message sent", { patientId, kind, sid: res.sid });
+    return { ok: true, sid: res.sid };
+  }
+);

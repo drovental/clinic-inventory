@@ -1,12 +1,20 @@
-﻿// src/pages/LoyaltyTab.js
+// src/pages/LoyaltyTab.js
 import React, { useMemo, useState } from "react";
 import toast from "react-hot-toast";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../firebase";
 import {
   usePatients, useTreatments, useLoyalty,
   getTier, pointsToShekels, getRenewalRule, TIERS, SHEKELS_PER_100_POINTS,
 } from "../hooks/useFirestore";
 
 const DAY = 24 * 60 * 60 * 1000;
+const sendLoyaltyMessage = httpsCallable(functions, "sendLoyaltyMessage");
+const SEND_ERRORS = {
+  "no-phone": "אין מספר טלפון בתיק המטופלת",
+  "opted-out": "המטופלת ביקשה לא לקבל הודעות",
+  "shabbat": "לא שולחים הודעות בשבת",
+};
 function toDate(ts) {
   if (!ts) return null;
   if (typeof ts.toDate === "function") return ts.toDate();
@@ -31,7 +39,33 @@ export default function LoyaltyTab() {
   const [redeem, setRedeem] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(""); // key of row being sent
   const [view, setView] = useState("points"); // points | renewals | birthdays
+
+  // Reminders sent in the last 30 days: key = patientId|treatment
+  const recentlySent = useMemo(() => {
+    const cutoff = Date.now() - 30 * DAY;
+    const set = new Set();
+    for (const t of transactions) {
+      if (t.type !== "message" || t.kind !== "renewal") continue;
+      const d = toDate(t.createdAt);
+      if (d && d.getTime() > cutoff) set.add(`${t.patientId}|${t.treatment || ""}`);
+    }
+    return set;
+  }, [transactions]);
+
+  async function handleSend(kind, p, treatment) {
+    const key = `${p.id}|${treatment || "bday"}`;
+    setSending(key);
+    try {
+      await sendLoyaltyMessage({ patientId: p.id, kind, treatment: treatment || null });
+      toast.success(kind === "birthday" ? `ברכה ו־200 נקודות נשלחו ל${p.name} 🎂` : `תזכורת נשלחה ל${p.name} 💫`);
+    } catch (err) {
+      const code = (err?.message || "").replace(/^.*?:\s*/, "");
+      toast.error(SEND_ERRORS[code] || SEND_ERRORS[err?.message] || "השליחה נכשלה");
+      console.error(err);
+    } finally { setSending(""); }
+  }
 
   const patient = patients.find(p => p.id === patientId) || null;
   const balance = patient?.loyaltyPoints || 0;
@@ -238,21 +272,35 @@ export default function LoyaltyTab() {
             מטופלות שהגיע זמנן לחידוש או שיגיע בשבועיים הקרובים
           </div>
           {renewals.length === 0 && <div style={{ opacity: 0.6 }}>אין חידושים קרובים 🎉</div>}
-          {renewals.map(r => (
-            <div key={`${r.patientId}|${r.rule.label}`} style={{
-              padding: 12, marginBottom: 8, borderRadius: 10,
-              background: r.daysLeft < 0 ? "#fee2e2" : "#fef3c7", color: "#1f2937",
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-            }}>
-              <div>
-                <div style={{ fontWeight: 600 }}>{r.patientName}</div>
-                <div style={{ fontSize: 13 }}>{r.rule.label} · אחרון: {fmtDate(r.date)}</div>
+          {renewals.map(r => {
+            const key = `${r.patientId}|${r.rule.label}`;
+            const sent = recentlySent.has(key);
+            const p = patients.find(x => x.id === r.patientId);
+            return (
+              <div key={key} style={{
+                padding: 12, marginBottom: 8, borderRadius: 10,
+                background: r.daysLeft < 0 ? "#fee2e2" : "#fef3c7", color: "#1f2937",
+                display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+              }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600 }}>{r.patientName}</div>
+                  <div style={{ fontSize: 13 }}>{r.rule.label} · אחרון: {fmtDate(r.date)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>
+                    {r.daysLeft < 0 ? `באיחור ${Math.abs(r.daysLeft)} ימים` : r.daysLeft === 0 ? "היום" : `בעוד ${r.daysLeft} ימים`}
+                  </div>
+                </div>
+                {sent ? (
+                  <span style={{ fontSize: 13, color: "#16a34a", fontWeight: 600 }}>✓ נשלח</span>
+                ) : (
+                  <button type="button" className="btn btn-primary"
+                    disabled={!p || sending === key}
+                    onClick={() => p && handleSend("renewal", p, r.rule.label)}>
+                    {sending === key ? "..." : "שלחי תזכורת"}
+                  </button>
+                )}
               </div>
-              <div style={{ fontWeight: 700, fontSize: 14 }}>
-                {r.daysLeft < 0 ? `באיחור ${Math.abs(r.daysLeft)} ימים` : r.daysLeft === 0 ? "היום" : `בעוד ${r.daysLeft} ימים`}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -260,15 +308,29 @@ export default function LoyaltyTab() {
         <div>
           <div style={{ fontSize: 14, opacity: 0.7, marginBottom: 10 }}>ימי הולדת החודש</div>
           {birthdays.length === 0 && <div style={{ opacity: 0.6 }}>אין ימי הולדת החודש</div>}
-          {birthdays.map(p => (
-            <div key={p.id} style={{ padding: 12, marginBottom: 8, borderRadius: 10, background: "#fdf2f8", color: "#1f2937", display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontWeight: 600 }}>🎂 {p.name}</span>
-              <span>{p.day} בחודש</span>
-            </div>
-          ))}
+          {birthdays.map(p => {
+            const key = `${p.id}|bday`;
+            const gifted = p.lastBirthdayGiftYear === new Date().getFullYear();
+            return (
+              <div key={p.id} style={{ padding: 12, marginBottom: 8, borderRadius: 10, background: "#fdf2f8", color: "#1f2937", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600 }}>🎂 {p.name}</div>
+                  <div style={{ fontSize: 13 }}>{p.day} בחודש</div>
+                </div>
+                {gifted ? (
+                  <span style={{ fontSize: 13, color: "#16a34a", fontWeight: 600 }}>✓ נשלח</span>
+                ) : (
+                  <button type="button" className="btn btn-primary"
+                    disabled={sending === key}
+                    onClick={() => handleSend("birthday", p, null)}>
+                    {sending === key ? "..." : "ברכה + 200 נק׳"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
-
