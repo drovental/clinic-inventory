@@ -48,6 +48,7 @@ const CLAUDE_MODEL = "claude-sonnet-5-5";
 const CONVERSATIONS = "whatsappConversations";
 // No-reply handling: one reminder after REMINDER_AFTER_HOURS without an answer,
 // then the conversation is flagged "noReply" after NOREPLY_AFTER_HOURS more.
+const REMINDER_ENABLED = false;   // reminders felt like nagging – off for now
 const REMINDER_AFTER_HOURS = 8;   // 11:00 → ~19:00
 const NOREPLY_AFTER_HOURS = 15;   // next morning
 const FOLLOWUPS = "whatsappFollowups";
@@ -135,6 +136,7 @@ const SYSTEM_PROMPT = `את "נועה", העוזרת הדיגיטלית של ק�
 - אל תתני אבחנות או הנחיות רפואיות מעבר להנחיות הכלליות שאחרי טיפול (קירור עדין, להימנע מלחץ על האזור, להימנע מחום/ספורט ב-24 שעות). אל תמליצי על תרופות.
 - אם משהו לא תקין – הרגיעי, הסבירי שהרופא מקבל עדכון מיידי ויחזור אליה, ובמקרה דחוף בקשי ממנה להתקשר לקליניקה מיד.
 - כשברור שהכל בסדר – סיימי בחום, הזכירי שאפשר לכתוב לנו בכל שאלה, וסמני שהשיחה הסתיימה.
+- אם הלקוחה מבקשת להפסיק לקבל הודעות, אומרת שזה מציק, או מבקשת שלא יפנו אליה – התנצלי בחום ובקצרה, אשרי שלא יישלחו עוד הודעות מעקב, הזכירי שאפשר תמיד לכתוב לנו, וסמני stop=true. אל תנסי לשכנע אותה להמשיך.
 
 סיווג סיכון (risk) – חובה בכל תשובה:
 - "ok": הכל תקין, או תופעות צפויות וקלות (נפיחות קלה, שטף דם קטן, רגישות קלה, אדמומיות מקומית שחולפת).
@@ -158,6 +160,10 @@ const RESPOND_TOOL = {
       done: {
         type: "boolean",
         description: "true if the follow-up conversation has naturally concluded.",
+      },
+      stop: {
+        type: "boolean",
+        description: "true ONLY if the client asked not to receive more follow-up messages (opt-out).",
       },
     },
     required: ["reply", "risk", "summary", "done"],
@@ -242,6 +248,7 @@ async function askClaude(apiKey, conv) {
     risk,
     summary: (typeof raw.summary === "string" && raw.summary) || "ללא סיכום.",
     done: raw.done === true,
+    stop: raw.stop === true,
   };
 }
 
@@ -428,6 +435,21 @@ exports.whatsappWebhook = onRequest(
       status: result.done && result.risk === "ok" ? "closed" : "open",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
+    if (result.stop) {
+      // Client opted out: close the thread and cancel every follow-up still scheduled for her
+      update.optOut = true;
+      update.optOutAt = admin.firestore.FieldValue.serverTimestamp();
+      update.status = "closed";
+      update.awaitingReply = false;
+      update.lastSummary = "ביקשה להפסיק לקבל הודעות מעקב – המעקבים בוטלו. " + (result.summary || "");
+      try {
+        const pend = await db.collection(FOLLOWUPS).where("phone", "in", [conv.phone, "+" + conv.phone, conv.whatsapp || "whatsapp:+" + conv.phone]).get();
+        const batch = db.batch();
+        pend.docs.forEach((d) => { if (["scheduled", "pending"].includes(d.data().status)) batch.update(d.ref, { status: "cancelled", cancelledAt: admin.firestore.FieldValue.serverTimestamp(), cancelReason: "opt-out" }); });
+        await batch.commit();
+        logger.info("Opt-out: cancelled scheduled follow-ups", { phone: conv.phone, count: pend.size });
+      } catch (e) { logger.error("Opt-out cancel failed", e); }
+    }
     if (escalated) update.lastAlertAt = admin.firestore.FieldValue.serverTimestamp();
     await ref.set(update, { merge: true });
 
@@ -488,6 +510,11 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
   const convRef = db.collection(CONVERSATIONS).doc(key);
   const existing = await convRef.get();
   const prev = existing.exists ? existing.data() : null;
+  if (prev?.optOut) {
+    logger.info("Client opted out – follow-up skipped", { phone: key });
+    await ref.update({ status: "skipped", error: "client opted out" });
+    return;
+  }
   // Continue the same conversation thread if it is for the same treatment episode
   const sameEpisode = prev && prev.treatmentDate && prev.treatmentDate === (data.treatmentDate || "");
   const prevMessages = sameEpisode ? (prev.messages || []).slice(-MAX_HISTORY) : [];
@@ -578,8 +605,32 @@ exports.startFollowup = onDocumentCreated(
 //    on the same day are merged into one follow-up.
 // =====================================================================
 // "Day N after today at HH:00" in Israel time, returned as a UTC Date
-function dayOffsetAt(daysAhead, hour) {
-  const now = new Date();
+// Shabbat window (Israel time): no outgoing follow-ups from Friday 15:00 until Saturday 20:00.
+// Anything due inside the window is pushed to Sunday at FOLLOWUP_HOUR.
+const SHABBAT_START = { day: 5, hour: 15 }; // Friday
+const SHABBAT_END = { day: 6, hour: 20 };   // Saturday
+function israelParts(date) {
+  const p = new Intl.DateTimeFormat("en-US", { timeZone: TIMEZONE, weekday: "short", hour: "numeric", hour12: false })
+    .formatToParts(date).reduce((o, x) => ((o[x.type] = x.value), o), {});
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday);
+  return { day, hour: +p.hour % 24 };
+}
+function isShabbat(date = new Date()) {
+  const { day, hour } = israelParts(date);
+  if (day === SHABBAT_START.day && hour >= SHABBAT_START.hour) return true;
+  if (day === SHABBAT_END.day && hour < SHABBAT_END.hour) return true;
+  return false;
+}
+// Returns the same instant, or Sunday FOLLOWUP_HOUR if it falls inside Shabbat
+function avoidShabbat(date) {
+  if (!isShabbat(date)) return date;
+  const { day } = israelParts(date);
+  const daysToSunday = (7 - day) % 7 || 7; // Fri → 2, Sat → 1
+  return dayOffsetAt(daysToSunday, FOLLOWUP_HOUR, date);
+}
+
+function dayOffsetAt(daysAhead, hour, from = new Date()) {
+  const now = from;
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(now).reduce((o, p) => ((o[p.type] = p.value), o), {});
@@ -623,7 +674,14 @@ async function loadProtocols() {
 
 function pickProtocol(protocols, productName) {
   const name = String(productName || "").toLowerCase();
-  const hit = protocols.find((p) => (p.match || []).some((m) => m && name.includes(String(m).toLowerCase())));
+  // The most specific (longest) matching keyword wins, e.g. "stylage lips" beats "stylage"
+  let hit = null, best = 0;
+  for (const p of protocols) {
+    for (const m of p.match || []) {
+      const kw = String(m || "").trim().toLowerCase();
+      if (kw && kw.length > best && name.includes(kw)) { hit = p; best = kw.length; }
+    }
+  }
   return hit || protocols.find((p) => p.id === "default") || DEFAULT_PROTOCOLS[DEFAULT_PROTOCOLS.length - 1];
 }
 
@@ -661,7 +719,7 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
         const existingDay = d.dayOffset || 0;
         if (step.day > existingDay) {
           upd.dayOffset = step.day;
-          upd.scheduledFor = admin.firestore.Timestamp.fromDate(dayOffsetAt(step.day, FOLLOWUP_HOUR));
+          upd.scheduledFor = admin.firestore.Timestamp.fromDate(avoidShabbat(dayOffsetAt(step.day, FOLLOWUP_HOUR)));
           upd.protocolStepFocus = step.focus || "";
           upd.protocolId = protocol.id;
         }
@@ -691,7 +749,7 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
         status: "scheduled",
         scheduledFor: step.day === 0
           ? admin.firestore.Timestamp.fromDate(new Date(Date.now() + 2 * 60 * 1000))
-          : admin.firestore.Timestamp.fromDate(dayOffsetAt(step.day, FOLLOWUP_HOUR)),
+          : admin.firestore.Timestamp.fromDate(avoidShabbat(dayOffsetAt(step.day, FOLLOWUP_HOUR))),
         source: "auto",
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -703,8 +761,9 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
 // 4) Hourly: send scheduled follow-ups whose time has come
 // =====================================================================
 exports.sendScheduledFollowups = onSchedule(
-  { schedule: "every 1 hours", timeZone: TIMEZONE, secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WA_TEMPLATES] },
+  { schedule: "0 * * * *", timeZone: TIMEZONE, secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WA_TEMPLATES] },
   async () => {
+    if (isShabbat()) { logger.info("Shabbat – no follow-ups sent this hour"); return; }
     const now = admin.firestore.Timestamp.now();
     const due = await db
       .collection(FOLLOWUPS)
@@ -740,7 +799,7 @@ async function processNoReplies(sid, token) {
     const hours = (nowMs - sentMs) / 36e5;
     try {
       if (!c.reminderSent && hours >= REMINDER_AFTER_HOURS) {
-        if (!templateFor("reminder")) continue; // template not configured yet
+        if (!REMINDER_ENABLED || !templateFor("reminder")) continue;
         const firstName = (c.name || "").split(" ")[0] || "";
         const reminderText = `היי ${firstName} 💛 זאת נועה מקליניקת ARIA. שלחתי לך קודם הודעה בנוגע ל${c.treatment || "הטיפול"} ועוד לא ראיתי תשובה – רק רוצה לוודא שהכל בסדר. אפשר לענות לי כאן בכל שעה 🙂`;
         await sendWhatsAppTemplate(sid, token, c.whatsapp || "whatsapp:+" + c.phone, { 1: firstName, 2: c.treatment || "הטיפול" }, "reminder");

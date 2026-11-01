@@ -362,6 +362,7 @@ export default function FollowupTab() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                 <span className={`badge ${risk.badge}`}>{risk.label}</span>
+                {c.optOut && <span className="badge badge-danger" style={{ fontSize: "0.65rem" }}>ביקשה להפסיק</span>}
                 {c.noReply && !c.handled && <span className="badge badge-warn" style={{ fontSize: "0.65rem" }}>ללא מענה</span>}
                 {c.awaitingReply && !c.noReply && <span className="badge badge-info" style={{ fontSize: "0.65rem" }}>{c.reminderSent ? "נשלחה תזכורת" : "ממתינה לתשובה"}</span>}
                 {c.handled && <span className="badge badge-ok" style={{ fontSize: "0.65rem" }}>טופל</span>}
