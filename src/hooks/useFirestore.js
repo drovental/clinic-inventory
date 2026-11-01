@@ -204,3 +204,67 @@ export function useTherapists() {
 
   return { therapists, loading, addTherapist, updateTherapist, deleteTherapist };
 }
+
+// —— Loyalty club ————————————————————————————————————————
+export const POINTS_PER_SHEKEL = 1;
+export const SHEKELS_PER_100_POINTS = 10;
+export const TIERS = [
+  { key: "silver",  min: 0,     label: "כסף",  color: "#9ca3af" },
+  { key: "gold",    min: 5000,  label: "זהב",  color: "#d4af37" },
+  { key: "diamond", min: 15000, label: "יהלום", color: "#60a5fa" },
+];
+export function getTier(totalEarned = 0) {
+  return [...TIERS].reverse().find(t => totalEarned >= t.min) || TIERS[0];
+}
+export function pointsToShekels(points = 0) {
+  return Math.floor(points / 100) * SHEKELS_PER_100_POINTS;
+}
+
+// Renewal intervals in days, matched by keyword in product name (lowercase)
+export const RENEWAL_RULES = [
+  { match: ["dysport", "xeomin", "botox", "דיספורט", "קסאומין", "בוטוקס"], days: 120, label: "רעלן" },
+  { match: ["stylage", "hallura", "belotero", "סטילאז'", "הלורה", "בלוטרו"], days: 365, label: "מילוי" },
+  { match: ["radiesse", "harmonyca", "karisma", "רדיאס", "הרמוניקה", "קריזמה"], days: 365, label: "ביוסטימולטור" },
+  { match: ["exosome", "dermapen", "אקסוזום", "דרמפן"], days: 90, label: "דרמפן" },
+  { match: ["peel", "פילינג"], days: 60, label: "פילינג" },
+];
+export function getRenewalRule(productName = "") {
+  const n = productName.toLowerCase();
+  return RENEWAL_RULES.find(r => r.match.some(m => n.includes(m))) || null;
+}
+
+export function useLoyalty() {
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const q = query(collection(db, "loyaltyTransactions"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, snap => {
+      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  async function addPoints(patient, shekels, note = "") {
+    const points = Math.round(shekels * POINTS_PER_SHEKEL);
+    await addDoc(collection(db, "loyaltyTransactions"), {
+      patientId: patient.id, patientName: patient.name || "",
+      type: "earn", points, shekels, note, createdAt: serverTimestamp(),
+    });
+    await updateDoc(doc(db, "patients", patient.id), {
+      loyaltyPoints: increment(points),
+      loyaltyTotalEarned: increment(points),
+    });
+    return points;
+  }
+
+  async function redeemPoints(patient, points, note = "") {
+    await addDoc(collection(db, "loyaltyTransactions"), {
+      patientId: patient.id, patientName: patient.name || "",
+      type: "redeem", points: -points, shekels: pointsToShekels(points), note, createdAt: serverTimestamp(),
+    });
+    await updateDoc(doc(db, "patients", patient.id), { loyaltyPoints: increment(-points) });
+  }
+
+  return { transactions, loading, addPoints, redeemPoints };
+}
