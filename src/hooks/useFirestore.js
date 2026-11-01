@@ -209,9 +209,9 @@ export function useTherapists() {
 export const POINTS_PER_SHEKEL = 1;
 export const SHEKELS_PER_100_POINTS = 10;
 export const TIERS = [
-  { key: "silver",  min: 0,     label: "כסף",  color: "#9ca3af" },
-  { key: "gold",    min: 5000,  label: "זהב",  color: "#d4af37" },
-  { key: "diamond", min: 15000, label: "יהלום", color: "#60a5fa" },
+  { key: "silver",  min: 0,     multiplier: 1,     label: "כסף",  color: "#9ca3af" },
+  { key: "gold",    min: 5000,  multiplier: 1.25,  label: "זהב",  color: "#d4af37" },
+  { key: "diamond", min: 15000, multiplier: 1.5, label: "יהלום", color: "#60a5fa" },
 ];
 export function getTier(totalEarned = 0) {
   return [...TIERS].reverse().find(t => totalEarned >= t.min) || TIERS[0];
@@ -246,7 +246,7 @@ export function useLoyalty() {
   }, []);
 
   async function addPoints(patient, shekels, note = "") {
-    const points = Math.round(shekels * POINTS_PER_SHEKEL);
+    const points = Math.round(shekels * POINTS_PER_SHEKEL * (getTier(patient.loyaltyTotalEarned || 0).multiplier || 1));
     await addDoc(collection(db, "loyaltyTransactions"), {
       patientId: patient.id, patientName: patient.name || "",
       type: "earn", points, shekels, note, createdAt: serverTimestamp(),
@@ -268,3 +268,4 @@ export function useLoyalty() {
 
   return { transactions, loading, addPoints, redeemPoints };
 }
+
