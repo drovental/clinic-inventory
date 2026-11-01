@@ -1,4 +1,4 @@
-// src/pages/LoyaltyTab.js
+﻿// src/pages/LoyaltyTab.js
 import React, { useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import {
@@ -154,7 +154,7 @@ export default function LoyaltyTab() {
             {!patientId && filtered.length > 0 && (
               <div style={{
                 position: "absolute", top: "100%", right: 0, left: 0, zIndex: 10,
-                background: "var(--bg-card, #fff)", border: "1px solid var(--border, #e5e7eb)",
+                background: "var(--bg-card, #fff)", color: "#1f2937", border: "1px solid var(--border, #e5e7eb)",
                 borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", maxHeight: 260, overflowY: "auto",
               }}>
                 {filtered.map(p => {
@@ -241,7 +241,7 @@ export default function LoyaltyTab() {
           {renewals.map(r => (
             <div key={`${r.patientId}|${r.rule.label}`} style={{
               padding: 12, marginBottom: 8, borderRadius: 10,
-              background: r.daysLeft < 0 ? "#fee2e2" : "#fef3c7",
+              background: r.daysLeft < 0 ? "#fee2e2" : "#fef3c7", color: "#1f2937",
               display: "flex", justifyContent: "space-between", alignItems: "center",
             }}>
               <div>
@@ -261,7 +261,7 @@ export default function LoyaltyTab() {
           <div style={{ fontSize: 14, opacity: 0.7, marginBottom: 10 }}>ימי הולדת החודש</div>
           {birthdays.length === 0 && <div style={{ opacity: 0.6 }}>אין ימי הולדת החודש</div>}
           {birthdays.map(p => (
-            <div key={p.id} style={{ padding: 12, marginBottom: 8, borderRadius: 10, background: "#fdf2f8", display: "flex", justifyContent: "space-between" }}>
+            <div key={p.id} style={{ padding: 12, marginBottom: 8, borderRadius: 10, background: "#fdf2f8", color: "#1f2937", display: "flex", justifyContent: "space-between" }}>
               <span style={{ fontWeight: 600 }}>🎂 {p.name}</span>
               <span>{p.day} בחודש</span>
             </div>
@@ -271,3 +271,4 @@ export default function LoyaltyTab() {
     </div>
   );
 }
+
