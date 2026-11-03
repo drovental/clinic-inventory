@@ -1,4 +1,4 @@
-﻿// src/hooks/useFirestore.js
+// src/hooks/useFirestore.js
 import { useState, useEffect } from "react";
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc,
@@ -276,7 +276,7 @@ export function referralCode(patientId = "") {
   return "ARIA-" + patientId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 5).toUpperCase();
 }
 export function findByReferralCode(patients, code = "") {
-  const c = code.trim().toUpperCase().replace(/\s/g, "");
+  let c = code.trim().toUpperCase().replace(/\s/g, ""); if (c && !c.startsWith("ARIA-")) c = "ARIA-" + c.replace(/^ARIA/, "");
   if (!c) return null;
   return patients.find(p => referralCode(p.id) === c) || null;
 }
