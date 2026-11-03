@@ -195,7 +195,8 @@ async function askClaude(apiKey, conv) {
         : "")
     : "";
   const genderLine = conv.gender === "m" ? "המטופל הוא גבר – פנה אליו בלשון זכר (אתה, שלך, תרגיש)." : "המטופלת היא אישה – פני אליה בלשון נקבה.";
-  const context = `${genderLine}\nפרטי הלקוח/ה: שם – ${conv.name || "לא ידוע"}. טיפול – ${conv.treatment || "לא צוין"}. ${
+  const portalLine = "באזור האישי (aria-clinic-portal.netlify.app, כניסה עם מספר הטלפון וקוד במסרון) אפשר לראות הוראות לאחר הטיפול, תמונות לפני/אחרי, נקודות מועדון ולקבוע תור. הזכר/י את זה פעם אחת בשיחה, בטבעיות, רק כשזה רלוונטי (למשל כששואלים על הוראות או על התור הבא) – לא בכל הודעה.";
+  const context = `${genderLine}\n${portalLine}\nפרטי הלקוח/ה: שם – ${conv.name || "לא ידוע"}. טיפול – ${conv.treatment || "לא צוין"}. ${
     conv.treatmentDate ? "תאריך הטיפול – " + conv.treatmentDate + "." : ""
   }${stageLine}`;
 
