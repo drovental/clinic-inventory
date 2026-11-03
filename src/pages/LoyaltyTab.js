@@ -5,7 +5,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "../firebase";
 import {
   usePatients, useTreatments, useLoyalty,
-  getTier, pointsToShekels, getRenewalRule, TIERS, SHEKELS_PER_100_POINTS,
+  getTier, pointsToShekels, getRenewalRule, TIERS, SHEKELS_PER_100_POINTS, referralCode, awardReferralIfDue, REFERRAL_BONUS,
 } from "../hooks/useFirestore";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -131,6 +131,7 @@ export default function LoyaltyTab() {
     setSaving(true);
     try {
       const pts = await addPoints(patient, amount, note);
+      if (await awardReferralIfDue(patient, patients)) toast.success("🤝 בונוס חבר מביא חבר: " + REFERRAL_BONUS + " נקודות לשתיהן", { duration: 5000 });
       toast.success(`נוספו ${fmtNum(pts)} נקודות ל${patient.name} ✨`);
       setShekels(""); setNote("");
     } catch (err) {
@@ -217,6 +218,7 @@ export default function LoyaltyTab() {
                 <div style={{ fontSize: 40, fontWeight: 700, margin: "4px 0" }}>{fmtNum(balance)}</div>
                 <div style={{ fontSize: 14 }}>נקודות · שווי {fmtNum(pointsToShekels(balance))} ₪ הנחה</div>
                 <div style={{ marginTop: 10, fontWeight: 600, color: tier.color }}>דרגת {tier.label}</div>
+                <div style={{ fontSize: 12, marginTop: 6, opacity: 0.8 }}>קוד הפניה: <b>{referralCode(patient.id)}</b>{patient.referralCount ? ` · הביאה ${patient.referralCount}` : ""}</div>
                 {nextTier && (
                   <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
                     עוד {fmtNum(nextTier.min - totalEarned)} נקודות לדרגת {nextTier.label}

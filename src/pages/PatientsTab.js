@@ -1,4 +1,5 @@
-﻿import PatientPhotos from "../components/PatientPhotos";
+import { findByReferralCode } from "../hooks/useFirestore";
+import PatientPhotos from "../components/PatientPhotos";
 // src/pages/PatientsTab.js
 import React, { useState } from "react";
 import toast from "react-hot-toast";
@@ -39,7 +40,10 @@ export default function PatientsTab() {
     }
     setSaving(true);
     try {
-      await addPatient(form);
+      const referrer = findByReferralCode(patients, form.referral || "");
+    const { referral, ...rest } = form;
+    await addPatient(referrer ? { ...rest, referredBy: referrer.id, referredByName: referrer.name || "" } : rest);
+    if (form.referral && !referrer) toast("קוד הפניה לא נמצא - המטופלת נשמרה בלי הפניה");
       toast.success("מטופל נוסף");
       setForm(EMPTY);
       setShowForm(false);
@@ -68,6 +72,7 @@ export default function PatientsTab() {
           <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
             <div><label>שם מלא *</label><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="שם פרטי ושם משפחה" required /></div>
             <div><label>טלפון</label><input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="050-0000000" /></div>
+          <div><label>קוד הפניה (חבר מביא חבר)</label><input value={form.referral || ""} onChange={e => setForm({ ...form, referral: e.target.value })} placeholder="ARIA-XXXXX" /></div>
             <div><label>תאריך לידה</label><input type="date" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></div>
             <div><label>אלרגיות</label><input value={form.allergies} onChange={e => setForm({ ...form, allergies: e.target.value })} placeholder="פניצלין, לידוקאין..." /></div>
             <div><label>הערות רפואיות</label><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="מידע רלוונטי..." rows={2} /></div>

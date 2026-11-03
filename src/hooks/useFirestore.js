@@ -269,3 +269,39 @@ export function useLoyalty() {
   return { transactions, loading, addPoints, redeemPoints };
 }
 
+
+// —— Referral program ————————————————————————————————————
+export const REFERRAL_BONUS = 300;
+export function referralCode(patientId = "") {
+  return "ARIA-" + patientId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 5).toUpperCase();
+}
+export function findByReferralCode(patients, code = "") {
+  const c = code.trim().toUpperCase().replace(/\s/g, "");
+  if (!c) return null;
+  return patients.find(p => referralCode(p.id) === c) || null;
+}
+// Called on a patient's first payment: rewards her and the referrer once
+export async function awardReferralIfDue(patient, allPatients = []) {
+  if (!patient?.referredBy || patient.referralRewarded) return false;
+  const referrer = allPatients.find(p => p.id === patient.referredBy);
+  if (!referrer) return false;
+  const note = `בונוס חבר מביא חבר 🤝`;
+  await addDoc(collection(db, "loyaltyTransactions"), {
+    patientId: patient.id, patientName: patient.name || "", type: "referral",
+    points: REFERRAL_BONUS, shekels: 0, note: `${note} (הופנית על ידי ${referrer.name || ""})`,
+    createdAt: serverTimestamp(),
+  });
+  await addDoc(collection(db, "loyaltyTransactions"), {
+    patientId: referrer.id, patientName: referrer.name || "", type: "referral",
+    points: REFERRAL_BONUS, shekels: 0, note: `${note} (הבאת את ${patient.name || ""})`,
+    referredPatientId: patient.id, createdAt: serverTimestamp(),
+  });
+  await updateDoc(doc(db, "patients", patient.id), {
+    loyaltyPoints: increment(REFERRAL_BONUS), loyaltyTotalEarned: increment(REFERRAL_BONUS), referralRewarded: true,
+  });
+  await updateDoc(doc(db, "patients", referrer.id), {
+    loyaltyPoints: increment(REFERRAL_BONUS), loyaltyTotalEarned: increment(REFERRAL_BONUS),
+    referralCount: increment(1),
+  });
+  return true;
+}
