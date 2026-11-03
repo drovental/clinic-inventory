@@ -909,3 +909,45 @@ exports.sendLoyaltyMessage = onCallLoyalty(
     return { ok: true, sid: res.sid };
   }
 );
+
+
+// ============================================================
+// Patient portal: link the signed-in phone user to their patient record
+// Writes portalUsers/{uid} = { patientId, phone } — security rules read it
+// ============================================================
+const { onCall: onCallPortal, HttpsError: HttpsErrorPortal } = require("firebase-functions/v2/https");
+const PORTAL_USERS = "portalUsers";
+
+function phoneDigitsIL(raw) {
+  // Returns the local 9-digit form (without leading 0 / 972), or ""
+  let d = String(raw || "").replace(/\D/g, "");
+  if (d.startsWith("972")) d = d.slice(3);
+  if (d.startsWith("0")) d = d.slice(1);
+  return d.length === 9 ? d : "";
+}
+
+exports.linkPortalUser = onCallPortal({ region: "europe-west1" }, async (request) => {
+  if (!request.auth) throw new HttpsErrorPortal("unauthenticated", "login required");
+  const uid = request.auth.uid;
+  const authPhone = phoneDigitsIL(request.auth.token.phone_number || "");
+  if (!authPhone) throw new HttpsErrorPortal("failed-precondition", "no-phone");
+
+  // Already linked?
+  const existing = await db.collection(PORTAL_USERS).doc(uid).get();
+  if (existing.exists && existing.data().patientId) {
+    return { patientId: existing.data().patientId };
+  }
+
+  // Find the patient whose phone matches (any stored format)
+  const snap = await db.collection(PATIENTS).get();
+  const match = snap.docs.find(d => phoneDigitsIL(d.data().phone) === authPhone);
+  if (!match) throw new HttpsErrorPortal("not-found", "no patient with this phone");
+
+  await db.collection(PORTAL_USERS).doc(uid).set({
+    patientId: match.id,
+    phone: "+972" + authPhone,
+    linkedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  logger.info("Portal user linked", { uid, patientId: match.id });
+  return { patientId: match.id };
+});
