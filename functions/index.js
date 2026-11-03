@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ARIA Clinic – WhatsApp post-treatment follow-up bot
  * Firebase Cloud Functions (v2) + Twilio WhatsApp + Claude
  */
@@ -828,8 +828,8 @@ async function processNoReplies(sid, token) {
 // ============================================================
 const { onCall: onCallLoyalty, HttpsError: HttpsErrorLoyalty } = require("firebase-functions/v2/https");
 const LOYALTY_TX = "loyaltyTransactions";
-const LOYALTY_RENEWAL_TEMPLATE_SID = "HX4bb4d9c7ee046c257dd4a0977909de94";
-const LOYALTY_BIRTHDAY_TEMPLATE_SID = "HXe71641048209f78ee5bace0b2e5cb8a2";
+const LOYALTY_RENEWAL_TEMPLATE_SID = "HX1fac0b657fa9e1d697928711584125ef";
+const LOYALTY_BIRTHDAY_TEMPLATE_SID = "HXb24ff75e09293ed59e7e258268b2762a";
 const BIRTHDAY_GIFT_POINTS = 200;
 
 function loyaltyTemplateFor(kind) {
@@ -951,3 +951,4 @@ exports.linkPortalUser = onCallPortal({ region: "europe-west1" }, async (request
   logger.info("Portal user linked", { uid, patientId: match.id });
   return { patientId: match.id };
 });
+
