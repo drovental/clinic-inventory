@@ -41,6 +41,20 @@
                                            "order":  "ASCENDING"
                                        }
                                    ]
+                    },
+                    {
+                        "collectionGroup":  "patientPhotos",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "patientId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "createdAt",
+                                           "order":  "DESCENDING"
+                                       }
+                                   ]
                     }
                 ],
     "fieldOverrides":  [

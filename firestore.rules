@@ -36,6 +36,10 @@ service cloud.firestore {
       allow read, write: if isStaff();
       allow read: if isPatient() && resource.data.patientId == myPatientId();
     }
+    match /patientPhotos/{photoId} {
+      allow read, write: if isStaff();
+      allow read: if isPatient() && resource.data.patientId == myPatientId();
+    }
     match /followupProtocols/{protocolId} {
       allow read, write: if isStaff();
       allow read: if isPatient();
@@ -47,3 +51,4 @@ service cloud.firestore {
     }
   }
 }
+

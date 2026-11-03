@@ -1,4 +1,5 @@
-﻿// src/pages/PatientsTab.js
+﻿import PatientPhotos from "../components/PatientPhotos";
+// src/pages/PatientsTab.js
 import React, { useState } from "react";
 import toast from "react-hot-toast";
 import { usePatients, useTreatments } from "../hooks/useFirestore";
@@ -115,6 +116,7 @@ export default function PatientsTab() {
               <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
                 {p.dob && <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 8 }}>תאריך לידה: {p.dob}</p>}
                 {p.notes && <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 8 }}>הערות: {p.notes}</p>}
+              <PatientPhotos patient={p} />
 
                 {ptTreatments.length > 0 ? (
                   <>
@@ -160,3 +162,4 @@ export default function PatientsTab() {
     </div>
   );
 }
+

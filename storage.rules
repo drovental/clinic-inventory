@@ -1,0 +1,23 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isStaff() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function isOwnerPatient(patientId) {
+      return request.auth != null && request.auth.token.phone_number != null
+        && firestore.get(/databases/(default)/documents/portalUsers/$(request.auth.uid)).data.patientId == patientId;
+    }
+    match /patients/{patientId}/{file} {
+      allow read, write: if isStaff();
+      allow read: if isOwnerPatient(patientId);
+    }
+    match /aftercare/{file} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+    match /{allPaths=**} {
+      allow read, write: if isStaff();
+    }
+  }
+}
