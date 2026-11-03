@@ -55,6 +55,20 @@
                                            "order":  "DESCENDING"
                                        }
                                    ]
+                    },
+                    {
+                        "collectionGroup":  "appointmentRequests",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "patientId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "createdAt",
+                                           "order":  "DESCENDING"
+                                       }
+                                   ]
                     }
                 ],
     "fieldOverrides":  [

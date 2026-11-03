@@ -952,3 +952,108 @@ exports.linkPortalUser = onCallPortal({ region: "europe-west1" }, async (request
   return { patientId: match.id };
 });
 
+
+
+// ============================================================
+// Appointment requests from the patient portal
+// staff alert -> secretary WhatsApp; confirmation + day-before reminder -> patient
+// WA_TEMPLATES may override: {"apptStaff":"HX..","apptConfirmed":"HX..","apptReminder":"HX.."}
+// ============================================================
+const { onDocumentCreated: onApptCreated, onDocumentUpdated: onApptUpdated } = require("firebase-functions/v2/firestore");
+const { onSchedule: onApptSchedule } = require("firebase-functions/v2/scheduler");
+const APPOINTMENTS = "appointmentRequests";
+const APPT_STAFF_WHATSAPP = ["whatsapp:+972524430344"]; // secretary
+const APPT_TEMPLATES = {
+  staff: "HX955912a16e069d2326c50e92e2eee6b3",
+  confirmed: "HXea522852dba4d2413c3dcf489c02abff",
+  reminder: "HXc0c0eff4d909d88d7b7ba362ed0653ae",
+};
+const HEB_DAYS = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
+const SLOT_LABELS = { morning: "בבוקר", noon: "בצהריים", evening: "בערב" };
+
+function apptTemplateFor(kind) {
+  try {
+    const map = JSON.parse(WA_TEMPLATES.value() || "{}");
+    const key = { staff: "apptStaff", confirmed: "apptConfirmed", reminder: "apptReminder" }[kind];
+    return map[key] || APPT_TEMPLATES[kind];
+  } catch { return APPT_TEMPLATES[kind]; }
+}
+// "2026-11-12T10:30" -> { dayLabel: "ג' 12.11", time: "10:30", full: "ג' 12.11 בשעה 10:30" }
+function apptLabel(confirmedAt = "") {
+  const m = String(confirmedAt).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return { dayLabel: confirmedAt, time: "", full: confirmedAt };
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const dayLabel = `${HEB_DAYS[d.getDay()]} ${Number(m[3])}.${Number(m[2])}`;
+  const time = `${m[4]}:${m[5]}`;
+  return { dayLabel, time, full: `${dayLabel} בשעה ${time}` };
+}
+function preferredLabel(a) {
+  const m = String(a.preferredDate || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const day = m ? `יום ${HEB_DAYS[new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay()]} ${Number(m[3])}.${Number(m[2])}` : "גמיש";
+  return `${day} ${SLOT_LABELS[a.slot] || ""}`.trim();
+}
+async function sendApptTemplate(to, kind, variables) {
+  const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+  return client.messages.create({
+    from: WHATSAPP_FROM, to, contentSid: apptTemplateFor(kind), contentVariables: JSON.stringify(variables),
+  });
+}
+
+// 1) New request -> alert the secretary
+exports.onAppointmentRequested = onApptCreated(
+  { document: `${APPOINTMENTS}/{id}`, region: "europe-west1", secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WA_TEMPLATES] },
+  async (event) => {
+    const a = event.data?.data();
+    if (!a) return;
+    const vars = { 1: a.patientName || "", 2: a.phone || "", 3: a.treatment || "", 4: preferredLabel(a) + (a.note ? ` · ${a.note}` : "") };
+    for (const to of APPT_STAFF_WHATSAPP) {
+      try { await sendApptTemplate(to, "staff", vars); }
+      catch (e) { logger.error("Staff appt alert failed", { to, err: String(e) }); }
+    }
+  }
+);
+
+// 2) Status -> confirmed: tell the patient
+exports.onAppointmentUpdated = onApptUpdated(
+  { document: `${APPOINTMENTS}/{id}`, region: "europe-west1", secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WA_TEMPLATES] },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!after || before?.status === after.status || after.status !== "confirmed") return;
+    if (!after.phone) return;
+    const conv = await db.collection(CONVERSATIONS).doc(phoneKey(after.phone)).get();
+    if (conv.exists && conv.data().optOut) { logger.info("Appt confirm skipped: opted out"); return; }
+    const firstName = String(after.patientName || "").trim().split(/\s+/)[0] || "";
+    try {
+      const res = await sendApptTemplate("whatsapp:" + normalizePhone(after.phone), "confirmed",
+        { 1: firstName, 2: after.treatment || "", 3: apptLabel(after.confirmedAt).full });
+      await event.data.after.ref.update({ confirmationSid: res.sid, confirmationSentAt: admin.firestore.FieldValue.serverTimestamp() });
+    } catch (e) { logger.error("Appt confirmation failed", { id: event.params.id, err: String(e) }); }
+  }
+);
+
+// 3) Every evening (after Shabbat ends on Saturday): remind tomorrow's appointments
+exports.sendAppointmentReminders = onApptSchedule(
+  { schedule: "30 20 * * *", timeZone: TIMEZONE, region: "europe-west1", secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WA_TEMPLATES] },
+  async () => {
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: TIMEZONE }));
+    const t = new Date(now); t.setDate(t.getDate() + 1);
+    const tomorrow = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+    const snap = await db.collection(APPOINTMENTS).where("status", "==", "confirmed").get();
+    let sent = 0;
+    for (const d of snap.docs) {
+      const a = d.data();
+      if (a.reminderSent || !String(a.confirmedAt || "").startsWith(tomorrow) || !a.phone) continue;
+      const conv = await db.collection(CONVERSATIONS).doc(phoneKey(a.phone)).get();
+      if (conv.exists && conv.data().optOut) continue;
+      const firstName = String(a.patientName || "").trim().split(/\s+/)[0] || "";
+      try {
+        await sendApptTemplate("whatsapp:" + normalizePhone(a.phone), "reminder",
+          { 1: firstName, 2: a.treatment || "", 3: apptLabel(a.confirmedAt).time });
+        await d.ref.update({ reminderSent: true, reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });
+        sent++;
+      } catch (e) { logger.error("Appt reminder failed", { id: d.id, err: String(e) }); }
+    }
+    logger.info("Appointment reminders", { tomorrow, sent });
+  }
+);

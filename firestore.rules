@@ -40,6 +40,12 @@ service cloud.firestore {
       allow read, write: if isStaff();
       allow read: if isPatient() && resource.data.patientId == myPatientId();
     }
+    match /appointmentRequests/{reqId} {
+      allow read, write: if isStaff();
+      allow read: if isPatient() && resource.data.patientId == myPatientId();
+      allow create: if isPatient() && request.resource.data.patientId == myPatientId() && request.resource.data.status == "pending";
+      allow update: if isPatient() && resource.data.patientId == myPatientId() && request.resource.data.status == "cancelled";
+    }
     match /followupProtocols/{protocolId} {
       allow read, write: if isStaff();
       allow read: if isPatient();

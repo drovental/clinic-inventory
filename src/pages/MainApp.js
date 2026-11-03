@@ -1,4 +1,4 @@
-﻿// src/pages/MainApp.js
+// src/pages/MainApp.js
 import React, { useState } from "react";
 import { signOut } from "firebase/auth";
 import { auth } from "../firebase";
@@ -9,6 +9,7 @@ import PatientsTab from "./PatientsTab";
 import OrdersTab from "./OrdersTab";
 import FollowupTab from "./FollowupTab";
 import LoyaltyTab from "./LoyaltyTab";
+import AppointmentsTab from "./AppointmentsTab";
 
 const TABS = [
   { id: "scan",      label: "סריקה",    icon: "📷" },
@@ -17,6 +18,7 @@ const TABS = [
   { id: "orders",    label: "הזמנות",   icon: "🚚" },
   { id: "followup",  label: "מעקב",     icon: "💬" },
     { id: "loyalty",   label: "מועדון",   icon: "💎" },
+    { id: "appointments", label: "תורים", icon: "📅" },
 ];
 
 export default function MainApp({ user }) {
@@ -61,6 +63,7 @@ export default function MainApp({ user }) {
         {activeTab === "orders"    && <OrdersTab />}
         {activeTab === "followup"  && <FollowupTab />}
         {activeTab === "loyalty"   && <LoyaltyTab />}
+        {activeTab === "appointments" && <AppointmentsTab />}
       </main>
 
       {/* Bottom nav */}

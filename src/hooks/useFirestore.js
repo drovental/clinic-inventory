@@ -222,7 +222,7 @@ export function pointsToShekels(points = 0) {
 
 // Renewal intervals in days, matched by keyword in product name (lowercase)
 export const RENEWAL_RULES = [
-  { match: ["dysport", "xeomin", "botox", "דיספורט", "קסאומין", "בוטוקס"], days: 120, label: "רעלן" },
+  { match: ["dysport", "xeomin", "botox", "דיספורט", "קסאומין", "בוטוקס"], days: 120, label: "בוטוקס" },
   { match: ["stylage", "hallura", "belotero", "סטילאז'", "הלורה", "בלוטרו"], days: 365, label: "מילוי" },
   { match: ["radiesse", "harmonyca", "karisma", "רדיאס", "הרמוניקה", "קריזמה"], days: 365, label: "ביוסטימולטור" },
   { match: ["exosome", "dermapen", "אקסוזום", "דרמפן"], days: 90, label: "דרמפן" },
