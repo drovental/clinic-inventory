@@ -1,5 +1,7 @@
 ﻿// src/pages/ScanTab.js
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase";
 import toast from "react-hot-toast";
 import { useCameraScanner, useUSBScanner } from "../hooks/useBarcodeScanner";
 import { useInventory, useTreatments, usePatients, useTherapists } from "../hooks/useFirestore";
@@ -17,6 +19,42 @@ export default function ScanTab({ user }) {
   const [patientId, setPatientId] = useState("");
   const [therapistId, setTherapistId] = useState(() => { try { return localStorage.getItem("lastTherapistId") || ""; } catch { return ""; } });
   const [dose, setDose] = useState("1");
+  // "Service" treatments (device / facial) – no inventory item, picked from the follow-up protocols
+  const [protocols, setProtocols] = useState([]);
+  const [showService, setShowService] = useState(false);
+  const [serviceProtoId, setServiceProtoId] = useState("");
+  const [serviceLabel, setServiceLabel] = useState("");
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "followupProtocols"), snap =>
+      setProtocols(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.id !== "default" && p.enabled !== false)
+        .sort((a, b) => (a.name || "").localeCompare(b.name || "", "he"))));
+    return unsub;
+  }, []);
+
+  async function confirmServiceTreatment() {
+    if (!patientId) { toast.error("יש לבחור מטופלת"); return; }
+    if (!therapistId) { toast.error("יש לבחור מטפל/ת"); return; }
+    const proto = protocols.find(p => p.id === serviceProtoId);
+    if (!proto && !serviceLabel.trim()) { toast.error("יש לבחור סוג טיפול"); return; }
+    // The product name must contain one of the protocol's keywords so the follow-up protocol is matched
+    const keyword = proto?.match?.[0] ? ` (${proto.match[0]})` : "";
+    const productName = proto ? `${proto.name}${keyword}` : serviceLabel.trim();
+    const patient = patients.find(p => p.id === patientId);
+    const therapistDoc = therapists.find(t => t.id === therapistId);
+    setSaving(true);
+    try {
+      await addTreatment({
+        productId: "service", productName, barcode: "", service: true,
+        patientId, patientName: patient?.name || "",
+        dose: 1, note, therapist: user.email, therapistId, therapistName: therapistDoc?.name || "",
+        remainingAfter: null,
+      });
+      toast.success("הטיפול נשמר ✅ נועה תשלח את דף ההנחיות");
+      try { localStorage.setItem("lastTherapistId", therapistId); } catch {}
+      setShowService(false); setServiceProtoId(""); setServiceLabel(""); setNote("");
+    } catch (e) { toast.error("שגיאה בשמירה: " + e.message); }
+    finally { setSaving(false); }
+  }
   const [customUnits, setCustomUnits] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -165,6 +203,48 @@ export default function ScanTab({ user }) {
             <button type="submit" className="btn btn-secondary">חפש</button>
           </form>
           <p style={{ fontSize: "0.75rem", color: "var(--text-tertiary)", marginTop: 6 }}>💡 סורק USB? פשוט סרוק — הוא יזוהה אוטומטית</p>
+
+          <button className="btn btn-secondary btn-full" onClick={() => { setShowService(!showService); setPatientId(patients[0]?.id || ""); }} style={{ marginTop: 14 }}>
+            {showService ? "✕ סגור" : "🧖 טיפול ללא מוצר (מכשיר / קוסמטיקה)"}
+          </button>
+          {showService && (
+            <div className="card" style={{ marginTop: 10, border: "2px solid var(--accent)" }}>
+              <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+                <div>
+                  <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>סוג טיפול</label>
+                  <select value={serviceProtoId} onChange={e => setServiceProtoId(e.target.value)}>
+                    <option value="">— בחר —</option>
+                    {protocols.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    <option value="__other">אחר (ללא פרוטוקול)</option>
+                  </select>
+                </div>
+                {serviceProtoId === "__other" && (
+                  <input value={serviceLabel} onChange={e => setServiceLabel(e.target.value)} placeholder="שם הטיפול (למשל: ניקוי פנים)" />
+                )}
+                <div>
+                  <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>מטופלת</label>
+                  <select value={patientId} onChange={e => setPatientId(e.target.value)}>
+                    <option value="">— בחר מטופל —</option>
+                    {patients.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>מטפל/ת</label>
+                  <select value={therapistId} onChange={e => setTherapistId(e.target.value)}>
+                    <option value="">— בחר מטפל/ת —</option>
+                    {therapists.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4, display: "block" }}>הערת טיפול</label>
+                  <input value={note} onChange={e => setNote(e.target.value)} placeholder="אזור, עוצמה, הערות..." />
+                </div>
+              </div>
+              <button className="btn btn-primary btn-full" onClick={confirmServiceTreatment} disabled={saving || !patientId || !therapistId || !serviceProtoId}>
+                {saving ? "שומר..." : "✅ אשר טיפול"}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
