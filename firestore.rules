@@ -1,32 +1,49 @@
-// firestore.rules
-// העתק קובץ זה לקונסול Firebase → Firestore → Rules
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // רק משתמשים מאומתים יכולים לגשת
-    function isAuth() {
-      return request.auth != null;
+    // Clinic staff: signed in with email/password (the clinic app)
+    function isStaff() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    // Patient portal: signed in with phone, linked to one patient record
+    function isPatient() {
+      return request.auth != null && request.auth.token.phone_number != null
+        && exists(/databases/$(database)/documents/portalUsers/$(request.auth.uid));
+    }
+    function myPatientId() {
+      return get(/databases/$(database)/documents/portalUsers/$(request.auth.uid)).data.patientId;
     }
 
-    // מלאי - כל משתמש מאומת יכול לקרוא/לכתוב
-    match /inventory/{itemId} {
-      allow read, write: if isAuth();
-    }
+    match /inventory/{itemId}            { allow read, write: if isStaff(); }
+    match /orders/{orderId}              { allow read, write: if isStaff(); }
+    match /equipment/{equipmentId}       { allow read, write: if isStaff(); }
+    match /treatmentCombos/{comboId}     { allow read, write: if isStaff(); }
+    match /treatmentPlans/{planId}       { allow read, write: if isStaff(); }
+    match /curatedMenus/{menuId}         { allow read, write: if isStaff(); }
+    match /whatsappConversations/{convId}{ allow read, write: if isStaff(); }
+    match /whatsappFollowups/{followupId}{ allow read, write: if isStaff(); }
+    match /therapists/{therapistId}      { allow read, write: if isStaff(); }
 
-    // מטופלים
     match /patients/{patientId} {
-      allow read, write: if isAuth();
+      allow read, write: if isStaff();
+      allow read: if isPatient() && patientId == myPatientId();
     }
-
-    // טיפולים
     match /treatments/{treatmentId} {
-      allow read, write: if isAuth();
+      allow read, write: if isStaff();
+      allow read: if isPatient() && resource.data.patientId == myPatientId();
     }
-
-    // הזמנות
-    match /orders/{orderId} {
-      allow read, write: if isAuth();
+    match /loyaltyTransactions/{txId} {
+      allow read, write: if isStaff();
+      allow read: if isPatient() && resource.data.patientId == myPatientId();
+    }
+    match /followupProtocols/{protocolId} {
+      allow read, write: if isStaff();
+      allow read: if isPatient();
+    }
+    // Written only by the linkPortalUser cloud function; a patient may read her own link
+    match /portalUsers/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
     }
   }
 }
