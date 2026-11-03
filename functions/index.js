@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ARIA Clinic – WhatsApp post-treatment follow-up bot
  * Firebase Cloud Functions (v2) + Twilio WhatsApp + Claude
  */
@@ -828,8 +828,8 @@ async function processNoReplies(sid, token) {
 // ============================================================
 const { onCall: onCallLoyalty, HttpsError: HttpsErrorLoyalty } = require("firebase-functions/v2/https");
 const LOYALTY_TX = "loyaltyTransactions";
-const LOYALTY_RENEWAL_TEMPLATE_SID = "HX1fac0b657fa9e1d697928711584125ef";
-const LOYALTY_BIRTHDAY_TEMPLATE_SID = "HXb24ff75e09293ed59e7e258268b2762a";
+const LOYALTY_RENEWAL_TEMPLATE_SID = "HX8689ca98ceb150f26dae6dfce5d2e7d4";
+const LOYALTY_BIRTHDAY_TEMPLATE_SID = "HX4d278e7a7439e9fa1391f4763f280e75";
 const BIRTHDAY_GIFT_POINTS = 200;
 
 function loyaltyTemplateFor(kind) {
@@ -964,9 +964,9 @@ const { onSchedule: onApptSchedule } = require("firebase-functions/v2/scheduler"
 const APPOINTMENTS = "appointmentRequests";
 const APPT_STAFF_WHATSAPP = ["whatsapp:+972524430344"]; // secretary
 const APPT_TEMPLATES = {
-  staff: "HX955912a16e069d2326c50e92e2eee6b3",
-  confirmed: "HXea522852dba4d2413c3dcf489c02abff",
-  reminder: "HXc0c0eff4d909d88d7b7ba362ed0653ae",
+  staff: "HXbbdb3c5f4c505697eda3ea9e6fe80b45",
+  confirmed: "HXc9e3b582d2515ececc3e2d5b6ffd9020",
+  reminder: "HXbb24f03632ee50c2dd9deb120d4eceed",
 };
 const HEB_DAYS = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
 const SLOT_LABELS = { morning: "בבוקר", noon: "בצהריים", evening: "בערב" };
