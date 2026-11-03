@@ -72,6 +72,7 @@ export default function PatientsTab() {
           <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
             <div><label>שם מלא *</label><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="שם פרטי ושם משפחה" required /></div>
             <div><label>טלפון</label><input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="050-0000000" /></div>
+          <div><label>פנייה</label><select value={form.gender || "f"} onChange={e => setForm({ ...form, gender: e.target.value })}><option value="f">נקבה</option><option value="m">זכר</option></select></div>
           <div><label>קוד הפניה (חבר מביא חבר)</label><input value={form.referral || ""} onChange={e => setForm({ ...form, referral: e.target.value })} placeholder="ARIA-XXXXX" /></div>
             <div><label>תאריך לידה</label><input type="date" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></div>
             <div><label>אלרגיות</label><input value={form.allergies} onChange={e => setForm({ ...form, allergies: e.target.value })} placeholder="פניצלין, לידוקאין..." /></div>

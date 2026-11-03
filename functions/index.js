@@ -194,7 +194,8 @@ async function askClaude(apiKey, conv) {
         ? `\nזו לא השיחה הראשונה עם הלקוחה – היא כבר מכירה אותך. אל תציגי את עצמך מחדש באריכות; התייחסי לזמן שעבר מאז הטיפול.`
         : "")
     : "";
-  const context = `פרטי הלקוחה: שם – ${conv.name || "לא ידוע"}. טיפול – ${conv.treatment || "לא צוין"}. ${
+  const genderLine = conv.gender === "m" ? "המטופל הוא גבר – פנה אליו בלשון זכר (אתה, שלך, תרגיש)." : "המטופלת היא אישה – פני אליה בלשון נקבה.";
+  const context = `${genderLine}\nפרטי הלקוח/ה: שם – ${conv.name || "לא ידוע"}. טיפול – ${conv.treatment || "לא צוין"}. ${
     conv.treatmentDate ? "תאריך הטיפול – " + conv.treatmentDate + "." : ""
   }${stageLine}`;
 
@@ -733,6 +734,7 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
       tx.set(ref, {
         phone,
         name: patient.name || t.patientName || "",
+        gender: patient.gender || "f",
         patientId: t.patientId,
         therapistId: t.therapistId || "",
         therapistName: t.therapistName || "",
