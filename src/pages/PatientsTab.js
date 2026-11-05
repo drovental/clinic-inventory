@@ -1,10 +1,10 @@
-import { findByReferralCode } from "../hooks/useFirestore";
+﻿import { findByReferralCode } from "../hooks/useFirestore";
 import PatientPhotos from "../components/PatientPhotos";
 // src/pages/PatientsTab.js
 import React, { useState } from "react";
 import toast from "react-hot-toast";
 import { usePatients, useTreatments } from "../hooks/useFirestore";
-import { collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
 // Delete the patient's WhatsApp conversations and scheduled follow-ups as well
@@ -120,6 +120,13 @@ export default function PatientsTab() {
 
             {isOpen && (
               <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                  פנייה: {p.gender === "m" ? "זכר" : "נקבה"}
+                  <button className="btn btn-secondary" style={{ fontSize: "0.7rem", padding: "2px 8px" }}
+                    onClick={async () => { await updateDoc(doc(db, "patients", p.id), { gender: p.gender === "m" ? "f" : "m" }); toast.success("עודכן"); }}>
+                    שנה ל{p.gender === "m" ? "נקבה" : "זכר"}
+                  </button>
+                </p>
                 {p.dob && <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 8 }}>תאריך לידה: {p.dob}</p>}
                 {p.notes && <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 8 }}>הערות: {p.notes}</p>}
               <PatientPhotos patient={p} />

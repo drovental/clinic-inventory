@@ -34,12 +34,14 @@ const WHATSAPP_FROM = "whatsapp:+972523617231";
 // Fallback: the original opening template for every stage until the new ones are approved.
 const LEGACY_OPENING_TEMPLATE_SID = "HX33e8aed946f18a25c62f63edd5a0e00b";
 const WA_TEMPLATES = defineSecret("WA_TEMPLATES");
-function templateFor(stage) {
+// gender: "m" picks the masculine variant (map["day1_m"] etc.) when it exists
+function templateFor(stage, gender) {
   try {
     const map = JSON.parse(WA_TEMPLATES.value() || "{}");
     if (stage === "alert") return map.alert || null; // no fallback for staff alerts
     if (stage === "reminder") return map.reminder || null; // no fallback for reminders
     if (stage === "day0") return null; // resolved per protocol in aftercareTemplateFor()
+    if (gender === "m" && map[stage + "_m"]) return map[stage + "_m"];
     return map[stage] || map.day1 || LEGACY_OPENING_TEMPLATE_SID;
   } catch { return stage === "alert" || stage === "reminder" ? null : LEGACY_OPENING_TEMPLATE_SID; }
 }
@@ -260,12 +262,12 @@ async function sendWhatsApp(sid, token, to, body) {
 }
 
 // Business-initiated message: must use an approved template
-async function sendWhatsAppTemplate(sid, token, to, variables, stage = "day1") {
+async function sendWhatsAppTemplate(sid, token, to, variables, stage = "day1", gender = "f") {
   const client = twilio(sid, token);
   return client.messages.create({
     from: WHATSAPP_FROM,
     to,
-    contentSid: templateFor(stage),
+    contentSid: templateFor(stage, gender),
     contentVariables: JSON.stringify(variables),
   });
 }
@@ -497,9 +499,20 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
   const treatmentLabel = data.treatment ? "ה" + data.treatment : "הטיפול";
   const stage = data.stage || "day1";
   const dayOffset = data.dayOffset || 1;
+  let gender = data.gender === "m" ? "m" : data.gender === "f" ? "f" : "";
+  if (!gender && data.patientId) {
+    try { gender = (await db.collection(PATIENTS).doc(data.patientId).get()).data()?.gender === "m" ? "m" : "f"; } catch { gender = "f"; }
+  }
+  if (!gender) gender = "f";
 
   // Local copy of what the approved template says, for the conversation log
-  const openings = {
+  const openings = gender === "m" ? {
+    day0: `היי ${firstName} 💛 זאת נועה, העוזרת הדיגיטלית של קליניקת ARIA. תודה שהיית אצלנו היום! מצורף דף ההנחיות לאחר ${treatmentLabel} – כדאי לשמור אותו. מחר אכתוב לך לשמוע איך אתה מרגיש 🌿`,
+    day1: `היי ${firstName} 💛 זאת נועה, העוזרת הדיגיטלית של קליניקת ARIA.\n` +
+          `רציתי לבדוק איך אתה מרגיש אחרי ${treatmentLabel}? הכל בסדר באזור הטיפול?`,
+    mid:  `היי ${firstName} 💛 זאת נועה מקליניקת ARIA. עברו כמה ימים מאז ${treatmentLabel} – איך אתה מרגיש? יש משהו שמטריד אותך?`,
+    final: `היי ${firstName} 💛 זאת נועה מקליניקת ARIA. רציתי לשמוע איך התוצאה של ${treatmentLabel} נראית לך עכשיו – מרוצה?`,
+  } : {
     day0: `היי ${firstName} 💛 זאת נועה, העוזרת הדיגיטלית של קליניקת ARIA. תודה שהיית אצלנו היום! מצורף דף ההנחיות לאחר ${treatmentLabel} – כדאי לשמור אותו. מחר אכתוב לך לשמוע איך את מרגישה 🌿`,
     day1: `היי ${firstName} 💛 זאת נועה, העוזרת הדיגיטלית של קליניקת ARIA.\n` +
           `רציתי לבדוק איך את מרגישה אחרי ${treatmentLabel}? הכל בסדר באזור הטיפול?`,
@@ -540,6 +553,7 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
       whatsapp: to,
       name: data.name || prev?.name || "",
       patientId: data.patientId || prev?.patientId || "",
+      gender,
       treatment: data.treatment || prev?.treatment || "",
       treatmentDate: data.treatmentDate || "",
       therapistId: therapist?.id || prev?.therapistId || "",
@@ -568,7 +582,7 @@ async function sendOpeningMessage({ sid, token, ref, data }) {
       if (!aftercareTemplateFor(protocolId, protocol)) { await ref.update({ status: "skipped", error: "no aftercare template for " + protocolId }); return; }
       await sendAftercareTemplate(sid, token, to, { firstName, treatmentLabel, protocolId, protocol });
     } else {
-      await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel }, stage);
+      await sendWhatsAppTemplate(sid, token, to, { 1: firstName, 2: treatmentLabel }, stage, gender);
       await convRef.set({
         awaitingReply: true, reminderSent: false, noReply: false,
         openingSentAt: admin.firestore.FieldValue.serverTimestamp(),

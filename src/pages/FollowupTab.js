@@ -166,7 +166,7 @@ export default function FollowupTab() {
     setSending(true);
     try {
       await addDoc(collection(db, "whatsappFollowups"), {
-        phone: p.phone, name: p.name, patientId: p.id,
+        phone: p.phone, name: p.name, patientId: p.id, gender: p.gender === "m" ? "m" : "f",
         treatment: newTreatment, treatmentDate: new Date().toISOString().slice(0, 10),
         therapistId: newTherapistId || "",
         therapistName: therapists.find(t => t.id === newTherapistId)?.name || "",
