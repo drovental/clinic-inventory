@@ -97,7 +97,7 @@ export default function IqImport({ patients }) {
           ))}
           {recent.map((r) => (
             <div key={r.id} style={{ borderTop: "1px solid var(--border)", padding: "6px 0" }}>
-              ✓ {fmt(r.createdAt)} · <b>{r.patientName}</b> · {r.images?.length || 0} תמונות · {r.source === "email" ? "מייל" : "העלאה"}
+              ✓ {fmt(r.createdAt)} · <b>{r.patientName}</b> · {r.images?.length || 0} תמונות · {r.tag === "after" ? "אחרי" : "לפני"} · {r.source === "email" ? "מייל" : "העלאה"}
               {r.pdfUrl && <> · <a href={r.pdfUrl} target="_blank" rel="noreferrer">PDF</a></>}
             </div>
           ))}

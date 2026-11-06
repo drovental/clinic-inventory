@@ -54,6 +54,28 @@ async function findPatient({ phone, name }) {
   return { patient: null, how: "none" };
 }
 
+// "before" for the patient's first Alma IQ visit, "after" for any later visit date.
+// A re-sent report of the same visit keeps the tag that visit already has.
+function parseVisitDate(d) { // "15.4.2026" → Date
+  const m = String(d || "").match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
+}
+async function tagForVisit(patientId, visitDate) {
+  const snap = await db().collection("iqReports").where("patientId", "==", patientId).where("status", "==", "matched").get();
+  const thisDate = parseVisitDate(visitDate);
+  let earliest = null, sameVisitTag = null;
+  for (const d of snap.docs) {
+    const r = d.data();
+    const vd = parseVisitDate(r.parsed?.visitDate);
+    if (!vd) continue;
+    if (thisDate && vd.getTime() === thisDate.getTime() && r.tag) sameVisitTag = r.tag;
+    if (!earliest || vd < earliest) earliest = vd;
+  }
+  if (sameVisitTag) return sameVisitTag;
+  if (!earliest || !thisDate) return "before";
+  return thisDate > earliest ? "after" : "before";
+}
+
 async function saveFile(path, buf, contentType) {
   const token = crypto.randomUUID();
   const file = bucket().file(path);
@@ -79,9 +101,11 @@ async function ingestIqReport(pdfBuffer, { source, meta = {} }) {
     stored.push({ ...f, view: im.view, viewLabel: im.viewLabel, mode: im.mode, modeLabel: im.modeLabel });
   }
 
+  const tag = patient ? await tagForVisit(patient.id, info.visitDate) : "before";
   const report = {
     status: patient ? "matched" : "unmatched",
     matchedBy: how,
+    tag,
     source,
     meta,
     patientId: patient?.id || "",
@@ -98,7 +122,7 @@ async function ingestIqReport(pdfBuffer, { source, meta = {} }) {
     for (const im of stored) {
       batch.set(db().collection("patientPhotos").doc(), {
         patientId: patient.id, patientName: patient.name || "",
-        path: im.path, url: im.url, tag: "before",
+        path: im.path, url: im.url, tag,
         area: `Alma IQ · ${im.viewLabel} · ${dateLabel}`,
         source: "alma-iq", iqReportId: ref.id, iqView: im.view, iqMode: im.mode,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -106,7 +130,7 @@ async function ingestIqReport(pdfBuffer, { source, meta = {} }) {
     }
     await batch.commit();
   }
-  logger.info("Alma IQ report ingested", { id: ref.id, status: report.status, matchedBy: how, name: info.name, phone: info.phone, images: stored.length });
+  logger.info("Alma IQ report ingested", { id: ref.id, status: report.status, matchedBy: how, tag, name: info.name, phone: info.phone, images: stored.length });
   return { id: ref.id, ...report };
 }
 
@@ -120,6 +144,7 @@ async function assignReport(reportId, patientId) {
   if (!psnap.exists) throw new Error("patient not found");
   const patient = { id: psnap.id, ...psnap.data() };
   const dateLabel = r.parsed?.visitDate || "";
+  const tag = await tagForVisit(patient.id, r.parsed?.visitDate);
   const moved = [];
   // move files under the patient folder so storage rules apply
   for (const im of r.images || []) {
@@ -143,13 +168,13 @@ async function assignReport(reportId, patientId) {
   for (const im of moved) {
     batch.set(db().collection("patientPhotos").doc(), {
       patientId: patient.id, patientName: patient.name || "",
-      path: im.path, url: im.url, tag: "before",
+      path: im.path, url: im.url, tag,
       area: `Alma IQ · ${im.viewLabel} · ${dateLabel}`,
       source: "alma-iq", iqReportId: reportId, iqView: im.view, iqMode: im.mode,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   }
-  batch.update(rref, { status: "matched", matchedBy: "manual", patientId: patient.id, patientName: patient.name || "", images: moved, pdfPath, pdfUrl, assignTo: admin.firestore.FieldValue.delete(), assignedAt: admin.firestore.FieldValue.serverTimestamp() });
+  batch.update(rref, { status: "matched", matchedBy: "manual", tag, patientId: patient.id, patientName: patient.name || "", images: moved, pdfPath, pdfUrl, assignTo: admin.firestore.FieldValue.delete(), assignedAt: admin.firestore.FieldValue.serverTimestamp() });
   await batch.commit();
 }
 
