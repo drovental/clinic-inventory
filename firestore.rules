@@ -23,6 +23,7 @@ service cloud.firestore {
     match /whatsappConversations/{convId}{ allow read, write: if isStaff(); }
     match /whatsappFollowups/{followupId}{ allow read, write: if isStaff(); }
     match /therapists/{therapistId}      { allow read, write: if isStaff(); }
+    match /iqReports/{reportId}          { allow read, write: if isStaff(); }
 
     match /patients/{patientId} {
       allow read, write: if isStaff();

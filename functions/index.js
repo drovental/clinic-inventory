@@ -1074,3 +1074,6 @@ exports.sendAppointmentReminders = onApptSchedule(
     logger.info("Appointment reminders", { tomorrow, sent });
   }
 );
+
+// Alma IQ report ingestion (see iq.js)
+Object.assign(exports, require("./iq"));

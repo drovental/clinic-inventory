@@ -1,5 +1,6 @@
 ﻿import { findByReferralCode } from "../hooks/useFirestore";
 import PatientPhotos from "../components/PatientPhotos";
+import IqImport from "../components/IqImport";
 // src/pages/PatientsTab.js
 import React, { useState } from "react";
 import toast from "react-hot-toast";
@@ -61,6 +62,8 @@ export default function PatientsTab() {
   return (
     <div>
       <input value={search} onChange={e => setSearch(e.target.value)} placeholder="חיפוש לפי שם / טלפון..." style={{ marginBottom: "0.75rem" }} />
+
+      <IqImport patients={patients} />
 
       <button className="btn btn-primary btn-full" onClick={() => setShowForm(!showForm)} style={{ marginBottom: "1rem" }}>
         {showForm ? "✕ ביטול" : "＋ מטופל חדש"}
