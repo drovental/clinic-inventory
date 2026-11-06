@@ -1076,4 +1076,6 @@ exports.sendAppointmentReminders = onApptSchedule(
 );
 
 // Alma IQ report ingestion (see iq.js)
-Object.assign(exports, require("./iq"));
+for (const mod of [require("./iq"), require("./gmail")]) {
+  for (const [k, v] of Object.entries(mod)) if (v && v.__endpoint) exports[k] = v; // only Cloud Functions, not helpers
+}

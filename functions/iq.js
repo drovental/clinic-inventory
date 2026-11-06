@@ -215,3 +215,5 @@ exports.onIqReportAssigned = onDocumentUpdated({ region: REGION, document: "iqRe
     await event.data.after.ref.update({ assignTo: admin.firestore.FieldValue.delete(), error: e.message });
   }
 });
+
+module.exports.ingestIqReport = ingestIqReport;

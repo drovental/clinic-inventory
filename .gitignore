@@ -3,3 +3,6 @@ build/
 .env 
 .vercel
 .env*
+
+functions/gmail-oauth.json
+functions/client_secret.json
