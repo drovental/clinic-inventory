@@ -18,6 +18,12 @@ async function compress(file, maxSide = 1400, quality = 0.82) {
   return new Promise(res => canvas.toBlob(res, "image/jpeg", quality));
 }
 
+const navBtn = (side) => ({
+  position: "absolute", [side]: 0, top: "50%", transform: "translateY(-50%)",
+  width: 44, height: 64, border: "none", borderRadius: 10, cursor: "pointer",
+  background: "rgba(255,255,255,0.15)", color: "#fff", fontSize: 36, lineHeight: "64px", padding: 0,
+});
+
 function fmt(ts) {
   const d = ts?.toDate ? ts.toDate() : ts ? new Date(ts) : null;
   return d ? d.toLocaleDateString("he-IL") : "";
@@ -28,8 +34,25 @@ export default function PatientPhotos({ patient }) {
   const [tag, setTag] = useState("before");
   const [area, setArea] = useState("");
   const [busy, setBusy] = useState(false);
-  const [preview, setPreview] = useState(null);
+  const [preview, setPreview] = useState(null); // index into photos, or null
   const fileRef = useRef(null);
+  const touchX = useRef(null);
+
+  const current = preview !== null ? photos[preview] : null;
+  const step = (d) => setPreview((i) => (i === null || !photos.length ? i : (i + d + photos.length) % photos.length));
+
+  // Keyboard: arrows to browse, Escape to close
+  useEffect(() => {
+    if (preview === null) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setPreview(null);
+      else if (e.key === "ArrowLeft") step(1);   // RTL: left arrow = next
+      else if (e.key === "ArrowRight") step(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview, photos.length]);
+  useEffect(() => { if (preview !== null && preview >= photos.length) setPreview(photos.length ? photos.length - 1 : null); }, [photos.length]);
 
   useEffect(() => {
     const q = query(collection(db, "patientPhotos"), where("patientId", "==", patient.id), orderBy("createdAt", "desc"));
@@ -85,7 +108,7 @@ export default function PatientPhotos({ patient }) {
       {photos.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: 8, marginTop: 10 }}>
           {photos.map(p => (
-            <div key={p.id} onClick={() => setPreview(p)} style={{ cursor: "pointer", position: "relative" }}>
+            <div key={p.id} onClick={() => setPreview(photos.indexOf(p))} style={{ cursor: "pointer", position: "relative" }}>
               <img src={p.url} alt="" style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 8 }} />
               <div style={{
                 position: "absolute", bottom: 4, right: 4, fontSize: 11, padding: "2px 6px", borderRadius: 6,
@@ -96,14 +119,34 @@ export default function PatientPhotos({ patient }) {
         </div>
       )}
 
-      {preview && (
-        <div onClick={() => setPreview(null)} style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 1000,
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16,
-        }}>
-          <img src={preview.url} alt="" style={{ maxWidth: "100%", maxHeight: "80vh", borderRadius: 10 }} />
-          <div style={{ color: "#fff", marginTop: 10 }}>{TAGS[preview.tag]} {preview.area ? `· ${preview.area}` : ""} · {fmt(preview.createdAt)}</div>
-          <button type="button" className="btn" style={{ marginTop: 10 }} onClick={e => { e.stopPropagation(); remove(preview); }}>🗑 מחק</button>
+      {current && (
+        <div onClick={() => setPreview(null)}
+          onTouchStart={e => { touchX.current = e.touches[0].clientX; }}
+          onTouchEnd={e => {
+            if (touchX.current === null) return;
+            const dx = e.changedTouches[0].clientX - touchX.current; touchX.current = null;
+            if (Math.abs(dx) > 50) step(dx < 0 ? 1 : -1); // swipe left = next (RTL)
+          }}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 1000,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16,
+          }}>
+          <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: "100%" }}>
+            {photos.length > 1 && (
+              <button type="button" aria-label="הבא" onClick={e => { e.stopPropagation(); step(1); }}
+                style={navBtn("left")}>‹</button>
+            )}
+            <img src={current.url} alt="" onClick={e => e.stopPropagation()} style={{ maxWidth: "calc(100% - 96px)", maxHeight: "78vh", borderRadius: 10 }} />
+            {photos.length > 1 && (
+              <button type="button" aria-label="הקודם" onClick={e => { e.stopPropagation(); step(-1); }}
+                style={navBtn("right")}>›</button>
+            )}
+          </div>
+          <div style={{ color: "#fff", marginTop: 10, textAlign: "center" }}>
+            {TAGS[current.tag]} {current.area ? `· ${current.area}` : ""} · {fmt(current.createdAt)}
+            <span style={{ opacity: 0.6, marginRight: 10, fontSize: "0.85em" }}>{preview + 1} / {photos.length}</span>
+          </div>
+          <button type="button" className="btn" style={{ marginTop: 10 }} onClick={e => { e.stopPropagation(); remove(current); }}>🗑 מחק</button>
         </div>
       )}
     </div>
