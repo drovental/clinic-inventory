@@ -847,15 +847,15 @@ const { onCall: onCallLoyalty, HttpsError: HttpsErrorLoyalty } = require("fireba
 const LOYALTY_TX = "loyaltyTransactions";
 const LOYALTY_RENEWAL_TEMPLATE_SID = "HX8689ca98ceb150f26dae6dfce5d2e7d4";
 const LOYALTY_BIRTHDAY_TEMPLATE_SID = "HX4d278e7a7439e9fa1391f4763f280e75";
-const BIRTHDAY_GIFT_POINTS = 200;
-
+// Loyalty v2: birthdays get a greeting only (no points) – template key "loyaltyBirthdayGreeting" in WA_TEMPLATES.
+// The old points-gift template (LOYALTY_BIRTHDAY_TEMPLATE_SID) is no longer used.
 function loyaltyTemplateFor(kind) {
   try {
     const map = JSON.parse(WA_TEMPLATES.value() || "{}");
-    if (kind === "birthday") return map.loyaltyBirthday || LOYALTY_BIRTHDAY_TEMPLATE_SID;
+    if (kind === "birthday") return map.loyaltyBirthdayGreeting || null;
     return map.loyaltyRenewal || LOYALTY_RENEWAL_TEMPLATE_SID;
   } catch {
-    return kind === "birthday" ? LOYALTY_BIRTHDAY_TEMPLATE_SID : LOYALTY_RENEWAL_TEMPLATE_SID;
+    return kind === "birthday" ? null : LOYALTY_RENEWAL_TEMPLATE_SID;
   }
 }
 
@@ -887,18 +887,9 @@ exports.sendLoyaltyMessage = onCallLoyalty(
 
     let variables;
     if (kind === "birthday") {
-      // Gift points first, then message
-      await db.collection(PATIENTS).doc(patientId).update({
-        loyaltyPoints: admin.firestore.FieldValue.increment(BIRTHDAY_GIFT_POINTS),
-        loyaltyTotalEarned: admin.firestore.FieldValue.increment(BIRTHDAY_GIFT_POINTS),
-        lastBirthdayGiftYear: new Date().getFullYear(),
-      });
-      await db.collection(LOYALTY_TX).add({
-        patientId, patientName: patient.name || "", type: "earn",
-        points: BIRTHDAY_GIFT_POINTS, shekels: 0, note: "מתנת יום הולדת 🎂",
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      variables = { 1: firstName, 2: String(BIRTHDAY_GIFT_POINTS) };
+      if (!loyaltyTemplateFor("birthday")) throw new HttpsErrorLoyalty("failed-precondition", "template-missing");
+      await db.collection(PATIENTS).doc(patientId).update({ lastBirthdayGreetingYear: new Date().getFullYear() });
+      variables = { 1: firstName };
     } else {
       const points = Number(patient.loyaltyPoints || 0).toLocaleString("he-IL");
       variables = { 1: firstName, 2: treatment || "אסתטי", 3: points };
@@ -1074,6 +1065,94 @@ exports.sendAppointmentReminders = onApptSchedule(
     logger.info("Appointment reminders", { tomorrow, sent });
   }
 );
+
+// ============================================================
+// Loyalty v2 maintenance: one-time migration + daily points expiry
+// ============================================================
+const { onCall: onCallLoyaltyV2, HttpsError: HttpsErrorLoyaltyV2 } = require("firebase-functions/v2/https");
+const { onSchedule: onScheduleLoyalty } = require("firebase-functions/v2/scheduler");
+const LOYALTY_EXPIRY_MONTHS = 24;
+
+// Old scheme: 1 point per ₪, 100 points = 10 ₪  →  New: 1 point = 1 ₪. So old points ÷ 10.
+// Also builds loyaltySpendByYear from historic "earn" transactions and marks remaining/expiresAt on them.
+exports.migrateLoyaltyV2 = onCallLoyaltyV2({ region: "europe-west1", timeoutSeconds: 540, memory: "512MiB" }, async (request) => {
+  if (!request.auth) throw new HttpsErrorLoyaltyV2("unauthenticated", "login required");
+  const settingsRef = db.collection("settings").doc("loyalty");
+  const settings = (await settingsRef.get()).data() || {};
+  if (settings.migratedV2At) return { ok: true, alreadyDone: true };
+
+  const txSnap = await db.collection(LOYALTY_TX).orderBy("createdAt", "asc").get();
+  const byPatient = {};
+  for (const d of txSnap.docs) {
+    const t = d.data();
+    if (!t.patientId) continue;
+    (byPatient[t.patientId] ||= []).push({ id: d.id, ...t });
+  }
+  const pSnap = await db.collection(PATIENTS).get();
+  let count = 0;
+  for (const pd of pSnap.docs) {
+    const p = pd.data();
+    const txs = byPatient[pd.id] || [];
+    const hasAnything = txs.length || p.loyaltyPoints || p.loyaltyTotalEarned;
+    if (!hasAnything) continue;
+    const spendByYear = {};
+    const batch = db.batch();
+    let newEarnedTotal = 0;
+    // convert earn-type transactions and record remaining (FIFO consumption of what was redeemed)
+    const earnTx = txs.filter((t) => ["earn", "referral"].includes(t.type) && (t.points || 0) > 0);
+    const redeemedOld = txs.filter((t) => t.type === "redeem").reduce((s, t) => s + Math.abs(t.points || 0), 0);
+    let toConsume = Math.round(redeemedOld / 10);
+    for (const t of earnTx) {
+      const created = t.createdAt?.toDate?.() || new Date();
+      if (t.shekels) { const y = String(created.getFullYear()); spendByYear[y] = (spendByYear[y] || 0) + Number(t.shekels); }
+      const newPts = Math.round((t.points || 0) / 10);
+      const take = Math.min(toConsume, newPts); toConsume -= take;
+      const exp = new Date(created); exp.setMonth(exp.getMonth() + LOYALTY_EXPIRY_MONTHS);
+      newEarnedTotal += newPts;
+      batch.update(d_ref(t.id), { points: newPts, remaining: newPts - take, expiresAt: admin.firestore.Timestamp.fromDate(exp), legacyPoints: t.points });
+    }
+    for (const t of txs.filter((t) => t.type === "redeem")) {
+      batch.update(d_ref(t.id), { points: -Math.round(Math.abs(t.points || 0) / 10), legacyPoints: t.points });
+    }
+    const newBalance = Math.max(0, Math.round((p.loyaltyPoints || 0) / 10));
+    batch.update(pd.ref, {
+      loyaltyPoints: newBalance,
+      loyaltyTotalEarned: newEarnedTotal || Math.round((p.loyaltyTotalEarned || 0) / 10),
+      loyaltySpendByYear: spendByYear,
+      loyaltyLegacyPoints: p.loyaltyPoints || 0,
+    });
+    batch.set(db.collection(LOYALTY_TX).doc(), {
+      patientId: pd.id, patientName: p.name || "", type: "migration", points: 0, shekels: 0,
+      note: `המרה לשיטה החדשה: ${p.loyaltyPoints || 0} נק׳ ישנות → ${newBalance} נק׳`,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    count++;
+  }
+  await settingsRef.set({ migratedV2At: admin.firestore.FieldValue.serverTimestamp(), migratedPatients: count }, { merge: true });
+  logger.info("Loyalty v2 migration done", { count });
+  return { ok: true, patients: count };
+  function d_ref(id) { return db.collection(LOYALTY_TX).doc(id); }
+});
+
+// Every night: points older than 24 months that were never used expire
+exports.expireLoyaltyPoints = onScheduleLoyalty({ schedule: "30 3 * * *", timeZone: TIMEZONE, region: "europe-west1" }, async () => {
+  const now = admin.firestore.Timestamp.now();
+  const snap = await db.collection(LOYALTY_TX).where("remaining", ">", 0).get();
+  const due = snap.docs.filter((d) => d.data().expiresAt && d.data().expiresAt.toMillis() <= now.toMillis());
+  const perPatient = {};
+  for (const d of due) { const t = d.data(); perPatient[t.patientId] = (perPatient[t.patientId] || 0) + t.remaining; }
+  const batch = db.batch();
+  for (const d of due) batch.update(d.ref, { remaining: 0, expiredAt: now });
+  for (const [patientId, pts] of Object.entries(perPatient)) {
+    const pSnap = await db.collection(PATIENTS).doc(patientId).get();
+    const name = pSnap.data()?.name || "";
+    batch.update(db.collection(PATIENTS).doc(patientId), { loyaltyPoints: admin.firestore.FieldValue.increment(-pts) });
+    batch.set(db.collection(LOYALTY_TX).doc(), { patientId, patientName: name, type: "expire", points: -pts, shekels: 0, note: "פקיעת תוקף (24 חודשים)", createdAt: now });
+  }
+  if (due.length) await batch.commit();
+  logger.info("Loyalty expiry", { transactions: due.length, patients: Object.keys(perPatient).length });
+});
 
 // Alma IQ report ingestion (see iq.js)
 for (const mod of [require("./iq"), require("./gmail")]) {

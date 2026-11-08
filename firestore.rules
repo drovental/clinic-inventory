@@ -24,6 +24,7 @@ service cloud.firestore {
     match /whatsappFollowups/{followupId}{ allow read, write: if isStaff(); }
     match /therapists/{therapistId}      { allow read, write: if isStaff(); }
     match /iqReports/{reportId}          { allow read, write: if isStaff(); }
+    match /settings/{settingId}          { allow read: if true; allow write: if isStaff(); }
 
     match /patients/{patientId} {
       allow read, write: if isStaff();

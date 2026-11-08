@@ -1,7 +1,7 @@
 // src/hooks/useFirestore.js
 import { useState, useEffect } from "react";
 import {
-  collection, onSnapshot, addDoc, updateDoc, deleteDoc,
+  collection, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, writeBatch,
   doc, query, orderBy, serverTimestamp, increment
 } from "firebase/firestore";
 import { db } from "../firebase";
@@ -205,19 +205,54 @@ export function useTherapists() {
   return { therapists, loading, addTherapist, updateTherapist, deleteTherapist };
 }
 
-// —— Loyalty club ————————————————————————————————————————
-export const POINTS_PER_SHEKEL = 1;
-export const SHEKELS_PER_100_POINTS = 10;
+// —— Loyalty club (v2 – tiers by yearly spend, 1 point = 1 ₪) ——————————
+// Earning: 2.5% of every payment (= 5 points per 200 ₪), rounded down. 1 point = 1 ₪ discount.
+// Tiers (by ₪ spent in a calendar year; status is kept through the following year):
+//   silver = everyone · gold ≥ 4,000 ₪ · platinum ≥ 7,000 ₪ · platinum also for 3+ successful referrals
+// Points expire 24 months after they were earned (FIFO). Rules document: /takanon.html
+export const EARN_RATE = 0.025;
+export const SHEKELS_PER_POINT = 1;
+export const POINTS_EXPIRY_MONTHS = 24;
+export const REFERRAL_BONUS = 50;          // to the referrer, on the referred patient's first payment
+export const JOIN_GIFT_DEFAULT = 30;       // to the new patient who was referred (editable in settings/loyalty)
+export const REFERRALS_FOR_PLATINUM = 3;
 export const TIERS = [
-  { key: "silver",  min: 0,     multiplier: 1,     label: "כסף",  color: "#9ca3af" },
-  { key: "gold",    min: 5000,  multiplier: 1.25,  label: "זהב",  color: "#d4af37" },
-  { key: "diamond", min: 15000, multiplier: 1.5, label: "יהלום", color: "#60a5fa" },
+  { key: "silver",   min: 0,    label: "כסף",     color: "#9ca3af", perks: ["צבירת 2.5% מכל תשלום (5 נק׳ לכל 200 ₪)", "1 נקודה = 1 ₪ הנחה, למימוש בכל עת"] },
+  { key: "gold",     min: 4000, label: "זהב",     color: "#d4af37", perks: ["כל הטבות כסף", "מתנה הביתה פעם בשנה"] },
+  { key: "platinum", min: 7000, label: "פלטינום", color: "#a78bfa", perks: ["כל הטבות זהב", "מתנת יום הולדת", "קו שירות VIP", "הזמנה לטיפול פנים פעם בשנה"] },
 ];
-export function getTier(totalEarned = 0) {
-  return [...TIERS].reverse().find(t => totalEarned >= t.min) || TIERS[0];
+// Legacy names kept so older imports don't break
+export const POINTS_PER_SHEKEL = EARN_RATE;
+export const SHEKELS_PER_100_POINTS = 100 * SHEKELS_PER_POINT;
+
+export function pointsForPayment(shekels = 0) {
+  return Math.floor(Number(shekels || 0) * EARN_RATE);
 }
 export function pointsToShekels(points = 0) {
-  return Math.floor(points / 100) * SHEKELS_PER_100_POINTS;
+  return Math.max(0, Math.floor(Number(points || 0))) * SHEKELS_PER_POINT;
+}
+export function yearSpend(patient, year = new Date().getFullYear()) {
+  return Number(patient?.loyaltySpendByYear?.[String(year)] || 0);
+}
+function tierBySpend(spend) {
+  return [...TIERS].reverse().find(t => spend >= t.min) || TIERS[0];
+}
+// Tier = best of: this year's spend, last year's spend (status kept one more year), referral platinum, manual override
+export function getTier(patient = {}) {
+  if (typeof patient === "number") return tierBySpend(0); // old call style getTier(totalEarned) – no longer meaningful
+  const y = new Date().getFullYear();
+  const candidates = [tierBySpend(yearSpend(patient, y)), tierBySpend(yearSpend(patient, y - 1))];
+  if ((patient.referralCount || 0) >= REFERRALS_FOR_PLATINUM) candidates.push(TIERS[2]);
+  if (patient.tierOverride) { const o = TIERS.find(t => t.key === patient.tierOverride); if (o) candidates.push(o); }
+  return candidates.reduce((a, b) => (b.min > a.min ? b : a));
+}
+export function nextTierInfo(patient = {}) {
+  const spend = yearSpend(patient);
+  const next = TIERS.find(t => t.min > spend);
+  return next ? { tier: next, missing: next.min - spend } : null;
+}
+export function expiryDate(from = new Date()) {
+  const d = new Date(from); d.setMonth(d.getMonth() + POINTS_EXPIRY_MONTHS); return d;
 }
 
 // Renewal intervals in days, matched by keyword in product name (lowercase)
@@ -233,6 +268,13 @@ export function getRenewalRule(productName = "") {
   return RENEWAL_RULES.find(r => r.match.some(m => n.includes(m))) || null;
 }
 
+export function useLoyaltySettings() {
+  const [settings, setSettings] = useState({ joinGiftPoints: JOIN_GIFT_DEFAULT });
+  useEffect(() => onSnapshot(doc(db, "settings", "loyalty"), s => s.exists() && setSettings({ joinGiftPoints: JOIN_GIFT_DEFAULT, ...s.data() })), []);
+  async function save(patch) { await setDoc(doc(db, "settings", "loyalty"), patch, { merge: true }); }
+  return { settings, save };
+}
+
 export function useLoyalty() {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -245,33 +287,62 @@ export function useLoyalty() {
     return unsub;
   }, []);
 
+  // Record a payment: 2.5% as points (expire in 24 months) + add the ₪ to this year's spend (tier)
   async function addPoints(patient, shekels, note = "") {
-    const points = Math.round(shekels * POINTS_PER_SHEKEL * (getTier(patient.loyaltyTotalEarned || 0).multiplier || 1));
+    const amount = Number(shekels || 0);
+    const points = pointsForPayment(amount);
+    const year = String(new Date().getFullYear());
     await addDoc(collection(db, "loyaltyTransactions"), {
       patientId: patient.id, patientName: patient.name || "",
-      type: "earn", points, shekels, note, createdAt: serverTimestamp(),
+      type: "earn", points, remaining: points, shekels: amount, note,
+      expiresAt: expiryDate(), createdAt: serverTimestamp(),
     });
     await updateDoc(doc(db, "patients", patient.id), {
       loyaltyPoints: increment(points),
       loyaltyTotalEarned: increment(points),
+      [`loyaltySpendByYear.${year}`]: increment(amount),
+      loyaltyLastPaymentAt: serverTimestamp(),
     });
     return points;
   }
 
+  // Redeem any whole number of points (1 point = 1 ₪), consuming the oldest points first
   async function redeemPoints(patient, points, note = "") {
-    await addDoc(collection(db, "loyaltyTransactions"), {
+    const pts = Math.floor(Number(points || 0));
+    const earned = transactions
+      .filter(t => t.patientId === patient.id && (t.remaining || 0) > 0)
+      .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+    let left = pts;
+    const batch = writeBatch(db);
+    for (const t of earned) {
+      if (left <= 0) break;
+      const take = Math.min(left, t.remaining);
+      batch.update(doc(db, "loyaltyTransactions", t.id), { remaining: t.remaining - take });
+      left -= take;
+    }
+    batch.set(doc(collection(db, "loyaltyTransactions")), {
       patientId: patient.id, patientName: patient.name || "",
-      type: "redeem", points: -points, shekels: pointsToShekels(points), note, createdAt: serverTimestamp(),
+      type: "redeem", points: -pts, shekels: pointsToShekels(pts), note, createdAt: serverTimestamp(),
     });
-    await updateDoc(doc(db, "patients", patient.id), { loyaltyPoints: increment(-points) });
+    batch.update(doc(db, "patients", patient.id), { loyaltyPoints: increment(-pts) });
+    await batch.commit();
   }
 
-  return { transactions, loading, addPoints, redeemPoints };
+  // Staff marks a tier perk as delivered (gold gift / platinum facial / platinum birthday gift)
+  async function markPerk(patient, perk, year = new Date().getFullYear()) {
+    await updateDoc(doc(db, "patients", patient.id), { [`loyaltyPerks.${perk}`]: year });
+    await addDoc(collection(db, "loyaltyTransactions"), {
+      patientId: patient.id, patientName: patient.name || "", type: "perk", perk, points: 0, shekels: 0,
+      note: PERK_LABELS[perk] || perk, createdAt: serverTimestamp(),
+    });
+  }
+
+  return { transactions, loading, addPoints, redeemPoints, markPerk };
 }
+export const PERK_LABELS = { goldGift: "מתנה שנתית הביתה (זהב)", platinumFacial: "טיפול פנים שנתי (פלטינום)", platinumBirthday: "מתנת יום הולדת (פלטינום)" };
 
 
-// —— Referral program ————————————————————————————————————
-export const REFERRAL_BONUS = 300;
+// —— Referral program (חבר מביא חבר) ——————————————————————
 export function referralCode(patientId = "") {
   return "ARIA-" + patientId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 5).toUpperCase();
 }
@@ -280,28 +351,33 @@ export function findByReferralCode(patients, code = "") {
   if (!c) return null;
   return patients.find(p => referralCode(p.id) === c) || null;
 }
-// Called on a patient's first payment: rewards her and the referrer once
-export async function awardReferralIfDue(patient, allPatients = []) {
+// Called on the referred patient's first payment: referrer gets REFERRAL_BONUS, the new patient gets the joining gift.
+// A referrer with 3 successful referrals becomes platinum automatically (see getTier).
+export async function awardReferralIfDue(patient, allPatients = [], joinGiftPoints = JOIN_GIFT_DEFAULT) {
   if (!patient?.referredBy || patient.referralRewarded) return false;
   const referrer = allPatients.find(p => p.id === patient.referredBy);
   if (!referrer) return false;
-  const note = `בונוס חבר מביא חבר 🤝`;
-  await addDoc(collection(db, "loyaltyTransactions"), {
-    patientId: patient.id, patientName: patient.name || "", type: "referral",
-    points: REFERRAL_BONUS, shekels: 0, note: `${note} (הופנית על ידי ${referrer.name || ""})`,
-    createdAt: serverTimestamp(),
-  });
-  await addDoc(collection(db, "loyaltyTransactions"), {
+  const gift = Math.max(0, Math.floor(Number(joinGiftPoints || 0)));
+  const batch = writeBatch(db);
+  if (gift > 0) {
+    batch.set(doc(collection(db, "loyaltyTransactions")), {
+      patientId: patient.id, patientName: patient.name || "", type: "referral",
+      points: gift, remaining: gift, shekels: 0, note: `מתנת הצטרפות 🎁 (הופנית על ידי ${referrer.name || ""})`,
+      expiresAt: expiryDate(), createdAt: serverTimestamp(),
+    });
+  }
+  batch.set(doc(collection(db, "loyaltyTransactions")), {
     patientId: referrer.id, patientName: referrer.name || "", type: "referral",
-    points: REFERRAL_BONUS, shekels: 0, note: `${note} (הבאת את ${patient.name || ""})`,
-    referredPatientId: patient.id, createdAt: serverTimestamp(),
+    points: REFERRAL_BONUS, remaining: REFERRAL_BONUS, shekels: 0, note: `בונוס חבר מביא חבר 🤝 (הבאת את ${patient.name || ""})`,
+    referredPatientId: patient.id, expiresAt: expiryDate(), createdAt: serverTimestamp(),
   });
-  await updateDoc(doc(db, "patients", patient.id), {
-    loyaltyPoints: increment(REFERRAL_BONUS), loyaltyTotalEarned: increment(REFERRAL_BONUS), referralRewarded: true,
+  batch.update(doc(db, "patients", patient.id), {
+    loyaltyPoints: increment(gift), loyaltyTotalEarned: increment(gift), referralRewarded: true,
   });
-  await updateDoc(doc(db, "patients", referrer.id), {
+  batch.update(doc(db, "patients", referrer.id), {
     loyaltyPoints: increment(REFERRAL_BONUS), loyaltyTotalEarned: increment(REFERRAL_BONUS),
     referralCount: increment(1),
   });
+  await batch.commit();
   return true;
 }
