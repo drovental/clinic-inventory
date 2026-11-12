@@ -136,7 +136,7 @@ const SYSTEM_PROMPT = `את "נועה", העוזרת הדיגיטלית של ק�
 - שאלה אחת בכל פעם. אל תחזרי על שאלות שכבר נענו.
 - הזדהי כ"נועה, העוזרת הדיגיטלית של קליניקת ARIA". אם שואלים אם את בוט או אדם – אשרי בכנות שאת עוזרת דיגיטלית, ושד"ר עמית והצוות רואים את השיחה ומקבלים עדכון על כל דבר חריג.
 - אל תתני אבחנות או הנחיות רפואיות מעבר להנחיות הכלליות שאחרי טיפול (קירור עדין, להימנע מלחץ על האזור, להימנע מחום/ספורט ב-24 שעות). אל תמליצי על תרופות.
-- אם משהו לא תקין – הרגיעי, הסבירי שהרופא מקבל עדכון מיידי ויחזור אליה, ובמקרה דחוף בקשי ממנה להתקשר לקליניקה מיד.
+- אם משהו לא תקין – הרגיעי, והסבירי שאת מעדכנת עכשיו את ד"ר עמית **וגם את המטפל/ת שטיפל/ה בה** (בשמו/ה, כפי שמופיע בפרטי השיחה), ושיחזרו אליה. אם המטפל הוא ד"ר עמית עצמו – ציני רק אותו. במקרה דחוף בקשי ממנה להתקשר לקליניקה מיד.
 - כשברור שהכל בסדר – סיימי בחום, הזכירי שאפשר לכתוב לנו בכל שאלה, וסמני שהשיחה הסתיימה.
 - אם הלקוחה מבקשת להפסיק לקבל הודעות, אומרת שזה מציק, או מבקשת שלא יפנו אליה – התנצלי בחום ובקצרה, אשרי שלא יישלחו עוד הודעות מעקב, הזכירי שאפשר תמיד לכתוב לנו, וסמני stop=true. אל תנסי לשכנע אותה להמשיך.
 
@@ -304,6 +304,9 @@ async function alertDoctor({ sid, token, recipients, conv, result, lastClientTex
     `טיפול: ${conv.treatment || "לא צוין"}\n` +
     (conv.stage ? `שלב: ${STAGE_LABEL[conv.stage] || conv.stage}${conv.dayOffset ? ` (יום ${conv.dayOffset})` : ""}\n` : "") +
     (conv.therapistName ? `מטפל/ת: ${conv.therapistName}\n` : "") +
+    (conv.therapistName && !/עמית/.test(conv.therapistName)
+      ? `כשצריך לעדכן את הצוות כתבי: "אני מעדכנת את ד"ר עמית ואת ${conv.therapistName}" – את השם כתבי בדיוק כך, כולל התואר ד"ר אם הוא מופיע, ובלי להוסיף תואר אם לא.\n`
+      : `כשצריך לעדכן את הצוות כתבי: "אני מעדכנת את ד"ר עמית".\n`) +
     `\nסיכום: ${result.summary}\n\n` +
     `ההודעה האחרונה שלה: "${lastClientText}"`;
 
@@ -723,7 +726,11 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
 
   // One follow-up doc per protocol step. ID = patient_date_stage so several products on the same day merge.
   for (const step of protocol.steps || []) {
-    const ref = db.collection(FOLLOWUPS).doc(`${t.patientId}_${dateKey}_${step.stage}`);
+    // day0 (aftercare PDF) is per protocol – two treatments on one day = two PDFs. Other stages merge into one conversation.
+    const docId = step.stage === "day0"
+      ? `${t.patientId}_${dateKey}_day0_${protocol.id}`
+      : `${t.patientId}_${dateKey}_${step.stage}`;
+    const ref = db.collection(FOLLOWUPS).doc(docId);
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (snap.exists) {
@@ -742,6 +749,12 @@ exports.onTreatmentCreated = onDocumentCreated(`${TREATMENTS}/{id}`, async (even
         if (!d.therapistId && t.therapistId) {
           upd.therapistId = t.therapistId;
           upd.therapistName = t.therapistName || "";
+        }
+        // A different protocol on the same day: give Noa both sets of clinic instructions
+        if (d.protocolId && d.protocolId !== protocol.id && protocol.guide && !(d.protocolGuide || "").includes(protocol.guide)) {
+          upd.protocolGuide = `${d.protocolGuide || ""}\n\n— ${protocol.name || protocol.id} —\n${protocol.guide}`.trim();
+          upd.protocolGuideUrl = [d.protocolGuideUrl, protocol.guideUrl].filter(Boolean).join(" , ");
+          upd.protocolName = [d.protocolName, protocol.name].filter(Boolean).join(" + ");
         }
         tx.update(ref, upd);
         return;
